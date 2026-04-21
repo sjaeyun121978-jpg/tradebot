@@ -72,7 +72,7 @@ async def main():
         text = event.message.text
         if not text:
             return
-        match = re.search(r'#([A-Z]{2,10})', text)
+        match = re.search(r'#([A-Za-z가-힣]{2,15})', text)
         if match:
             ticker = match.group(1)
             send_telegram(f"🔍 {ticker} 분석 중...")
