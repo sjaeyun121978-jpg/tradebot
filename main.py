@@ -1,14 +1,18 @@
 import asyncio
 import re
+import os
+import base64
 import requests
 import anthropic
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 
 API_ID = 29053680
 API_HASH = "3a70519636127aafe34f7cb61e8bea1c"
 BOT_TOKEN = "8664715398:AAH79xEFTw3P0oMRWUXVUVXkPVWvkQsu69k"
 CHAT_ID = "5393720278"
 ANTHROPIC_KEY = "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"
+SESSION_STRING = os.environ.get("SESSION_STRING")
 
 CHANNEL_IDS = [-1003332441222, -1002931696159]
 
@@ -59,7 +63,7 @@ def format_msg(ticker, result):
     return msg
 
 async def main():
-    client = TelegramClient('session', API_ID, API_HASH)
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     await client.start()
     send_telegram("✅ 모니터링 시작! 멍꼴단 감시 중...")
 
