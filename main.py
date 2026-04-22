@@ -1,10 +1,14 @@
 import asyncio
 import re
 import os
+import json
 import requests
 import anthropic
+import gspread
+from google.oauth2.service_account import Credentials
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from datetime import datetime
 
 API_ID = 29053680
 API_HASH = "3a70519636127aafe34f7cb61e8bea1c"
@@ -12,10 +16,11 @@ BOT_TOKEN = "8664715398:AAH79xEFTw3P0oMRWUXVUVXkPVWvkQsu69k"
 CHAT_ID = "5393720278"
 ANTHROPIC_KEY = "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"
 SESSION_STRING = os.environ.get("SESSION_STRING")
+GOOGLE_SHEETS_KEY = os.environ.get("GOOGLE_SHEETS_KEY")
+GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID")
 
 CHANNEL_IDS = [-1003332441222, -1002931696159]
 
-# 정보성 메시지 감지 키워드
 INFO_KEYWORDS = [
     "오더북", "매물대", "히트맵", "체결", "위험",
     "유효하지 않음", "지지", "저항", "돌파", "이탈",
@@ -23,20 +28,62 @@ INFO_KEYWORDS = [
     "파동", "엘리엇", "추세", "채널", "다이버전스"
 ]
 
-def send_telegram(msg):
+GAEDWAEJI_KEYWORDS = ["기준", "일봉", "주봉", "월봉", "시나리오", "1안", "2안", "3안", "전고"]
+
+def get_sheets_client():
+    try:
+        key_data = json.loads(GOOGLE_SHEETS_KEY)
+        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(key_data, scopes=scopes)
+        return gspread.authorize(creds)
+    except Exception as e:
+        print(f"Sheets 연결 실패: {e}")
+        return None
+
+def save_to_sheets(sheet_name, data_row):
+    try:
+        gc = get_sheets_client()
+        if not gc:
+            return False
+        sh = gc.open_by_key(GOOGLE_SHEETS_ID)
+        try:
+            ws = sh.worksheet(sheet_name)
+        except:
+            ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=10)
+        ws.append_row(data_row)
+        return True
+    except Exception as e:
+        print(f"Sheets 저장 실패: {e}")
+        return False
+
+def get_recent_records(sheet_name, limit=5):
+    try:
+        gc = get_sheets_client()
+        if not gc:
+            return []
+        sh = gc.open_by_key(GOOGLE_SHEETS_ID)
+        ws = sh.worksheet(sheet_name)
+        rows = ws.get_all_values()
+        return rows[-limit:] if len(rows) > limit else rows
+    except Exception as e:
+        print(f"Sheets 조회 실패: {e}")
+        return []
+
+def send_telegram(msg, chat_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
-        "chat_id": CHAT_ID,
+        "chat_id": chat_id or CHAT_ID,
         "text": msg,
         "parse_mode": "HTML"
     })
 
 def is_info_message(text):
-    """정보성 메시지 여부 판단"""
     return any(kw in text for kw in INFO_KEYWORDS)
 
+def is_gaedwaeji_message(text):
+    return any(kw in text for kw in GAEDWAEJI_KEYWORDS)
+
 def analyze_stock(ticker, comment):
-    """급등주 분석 - 기존 로직"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     result = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -58,7 +105,6 @@ def analyze_stock(ticker, comment):
     return result.content[0].text
 
 def analyze_info(text):
-    """정보성 메시지 기술적 분석"""
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     result = client.messages.create(
         model="claude-haiku-4-5-20251001",
@@ -66,14 +112,6 @@ def analyze_info(text):
         messages=[{"role": "user", "content": f"""
 당신은 전문 암호화폐 트레이더입니다.
 아래 정보성 메시지를 분석하여 판단하세요.
-
-분석 기준:
-- 엘리엇 파동 이론
-- 지지/저항 레벨
-- 오더북 매물대 변화
-- 캔들 패턴
-- 추세 방향
-- 과거 유사 패턴
 
 메시지 내용:
 {text}
@@ -89,8 +127,33 @@ def analyze_info(text):
     )
     return result.content[0].text
 
+def analyze_gaedwaeji(text):
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    result = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=600,
+        messages=[{"role": "user", "content": f"""
+당신은 전문 암호화폐 트레이더입니다.
+아래는 개돼지기법 채널의 기준 시나리오 게시글입니다.
+
+게시글:
+{text}
+
+아래 형식으로만 답해:
+코인:
+시간봉:
+기준일:
+1안:
+2안:
+3안:
+핵심방향:
+전고A:
+주의:
+"""}]
+    )
+    return result.content[0].text
+
 def format_stock_msg(ticker, result):
-    """급등주 알림 포맷 - 기존"""
     판단아이콘 = "🟢" if "지금진입가능" in result else "🟡" if "눌림대기" in result else "🔴"
     lines = result.strip().split('\n')
     msg = f"⚡ <b>{ticker}</b>\n\n"
@@ -107,60 +170,4 @@ def format_stock_msg(ticker, result):
             msg += f"2차: {line.split(':')[1].strip()}\n"
         elif "핵심:" in line:
             msg += f"\n📌 {line.split(':')[1].strip()}\n"
-        elif "주의:" in line:
-            msg += f"⚠️ {line.split(':')[1].strip()}\n"
-    return msg
-
-def format_info_msg(result):
-    """정보성 분석 알림 포맷"""
-    lines = result.strip().split('\n')
-    판단아이콘 = "🟢" if "상승우세" in result else "🔴" if "하락우세" in result else "🟡"
-    대응아이콘 = "⚡" if "지금진입" in result else "🚨" if "손절필요" in result else "👀"
-
-    msg = f"📊 <b>시장 정보 분석</b>\n\n"
-    for line in lines:
-        if not line.strip():
-            continue
-        if "코인:" in line:
-            msg += f"🪙 {line.split(':')[1].strip()}\n"
-        elif "상황:" in line:
-            msg += f"📌 {line.split(':')[1].strip()}\n\n"
-        elif "판단:" in line:
-            msg += f"{판단아이콘} 판단: {line.split(':')[1].strip()}\n"
-        elif "대응:" in line:
-            msg += f"{대응아이콘} 대응: {line.split(':')[1].strip()}\n\n"
-        elif "핵심근거:" in line:
-            msg += f"🔍 근거: {line.split(':')[1].strip()}\n"
-        elif "주의사항:" in line:
-            msg += f"⚠️ 주의: {line.split(':')[1].strip()}\n"
-    return msg
-
-async def main():
-    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    await client.start()
-    send_telegram("✅ 모니터링 시작! 멍꼴단 감시 중...")
-
-    @client.on(events.NewMessage(chats=CHANNEL_IDS))
-    async def handler(event):
-        text = event.message.text
-        if not text:
-            return
-
-        # 분기 1: 정보성 메시지 (오더북/매물대 등)
-        if is_info_message(text):
-            send_telegram("🔍 시장 정보 분석 중...")
-            result = analyze_info(text)
-            send_telegram(format_info_msg(result))
-            return
-
-        # 분기 2: 급등주 해시태그 메시지
-        match = re.search(r'#([A-Za-z가-힣]{2,15})', text)
-        if match:
-            ticker = match.group(1)
-            send_telegram(f"🔍 {ticker} 분석 중...")
-            result = analyze_stock(ticker, text)
-            send_telegram(format_stock_msg(ticker, result))
-
-    await client.run_until_disconnected()
-
-asyncio.run(main())
+        el
