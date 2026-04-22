@@ -25,6 +25,30 @@ CHANNEL_IDS = [-1003332441222, -1002931696159, "godofcandle"]
 INFO_KEYWORDS = ["오더북","매물대","히트맵","체결","위험","유효하지 않음","지지","저항","돌파","이탈","롱","숏","청산","펀딩","미결제약정","파동","엘리엇","추세","채널","다이버전스"]
 GAEDWAEJI_KEYWORDS = ["기준","일봉","주봉","월봉","시나리오","1안","2안","3안","전고"]
 
+def get_current_price(symbol):
+    try:
+        symbol_lower = symbol.lower()
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={symbol_lower}&vs_currencies=usd"
+        r = requests.get(url, timeout=5)
+        data = r.json()
+        if symbol_lower in data:
+            return data[symbol_lower]["usd"]
+        # 심볼로 검색
+        search_url = f"https://api.coingecko.com/api/v3/search?query={symbol}"
+        r2 = requests.get(search_url, timeout=5)
+        results = r2.json().get("coins", [])
+        if results:
+            coin_id = results[0]["id"]
+            url2 = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
+            r3 = requests.get(url2, timeout=5)
+            data2 = r3.json()
+            if coin_id in data2:
+                return data2[coin_id]["usd"]
+        return None
+    except Exception as e:
+        print(f"가격 조회 실패: {e}")
+        return None
+
 def get_sheets_client():
     try:
         key_data = json.loads(GOOGLE_SHEETS_KEY)
@@ -88,27 +112,11 @@ def analyze_image(image_bytes, caption=""):
         print(f"이미지 분석 실패: {e}")
         return None
 
-def format_image_msg(result):
-    판단아이콘 = "🟢" if "상승우세" in result else "🔴" if "하락우세" in result else "🟡"
-    대응아이콘 = "⚡" if "지금진입" in result else "🚨" if "손절필요" in result else "👀"
-    msg = f"📈 <b>차트 이미지 분석</b>\n\n"
-    lines = result.strip().split('\n')
-    for line in lines:
-        if not line.strip(): continue
-        if "코인:" in line: msg += f"🪙 {line}\n"
-        elif "시간봉:" in line: msg += f"⏱ {line}\n"
-        elif "패턴:" in line: msg += f"📊 {line}\n"
-        elif "현재위치:" in line: msg += f"📍 {line}\n\n"
-        elif "판단:" in line: msg += f"{판단아이콘} {line}\n"
-        elif "대응:" in line: msg += f"{대응아이콘} {line}\n\n"
-        elif "핵심근거:" in line: msg += f"🔍 {line}\n"
-        elif "주의:" in line: msg += f"⚠️ {line}\n"
-    return msg
-
-def analyze_stock(ticker, comment):
+def analyze_stock(ticker, comment, current_price=None):
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=300,
-        messages=[{"role":"user","content":f"종목: {ticker}\n코멘트: {comment}\n\n아래 형식으로만 답해:\n판단: 지금진입가능 또는 눌림대기 또는 진입금지\n진입가:\n손절가:\n1차타깃:\n2차타깃:\n핵심: 한줄요약\n주의: 한줄주의사항"}])
+    price_info = f"현재가: ${current_price}" if current_price else "현재가: 조회 실패"
+    result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=400,
+        messages=[{"role":"user","content":f"종목: {ticker}\n{price_info}\n코멘트: {comment}\n\n현재가 기준으로 아래 형식으로만 답해:\n판단: 지금진입가능 또는 눌림대기 또는 진입금지\n진입가:\n손절가:\n1차타깃:\n2차타깃:\n손익비:\n핵심: 한줄요약\n주의: 한줄주의사항"}])
     return result.content[0].text
 
 def analyze_info(text):
@@ -123,16 +131,18 @@ def analyze_gaedwaeji(text):
         messages=[{"role":"user","content":f"당신은 전문 암호화폐 트레이더입니다.\n개돼지기법 기준 시나리오:\n{text}\n\n아래 형식으로만 답해:\n코인:\n시간봉:\n기준일:\n1안:\n2안:\n3안:\n핵심방향:\n전고A:\n주의:"}])
     return result.content[0].text
 
-def format_stock_msg(ticker, result):
+def format_stock_msg(ticker, result, current_price=None):
     판단아이콘 = "🟢" if "지금진입가능" in result else "🟡" if "눌림대기" in result else "🔴"
+    price_str = f"💰 현재가: ${current_price}\n" if current_price else ""
     lines = result.strip().split('\n')
-    msg = f"⚡ <b>{ticker}</b>\n\n"
+    msg = f"⚡ <b>{ticker}</b>\n{price_str}\n"
     for line in lines:
         if "판단:" in line: msg += f"{판단아이콘} {line.split(':')[1].strip()}\n\n"
         elif "진입가:" in line: msg += f"진입: {line.split(':')[1].strip()}\n"
         elif "손절가:" in line: msg += f"손절: {line.split(':')[1].strip()}\n"
         elif "1차타깃:" in line: msg += f"1차: {line.split(':')[1].strip()}\n"
         elif "2차타깃:" in line: msg += f"2차: {line.split(':')[1].strip()}\n"
+        elif "손익비:" in line: msg += f"손익비: {line.split(':')[1].strip()}\n"
         elif "핵심:" in line: msg += f"\n📌 {line.split(':')[1].strip()}\n"
         elif "주의:" in line: msg += f"⚠️ {line.split(':')[1].strip()}\n"
     return msg
@@ -168,6 +178,23 @@ def format_gaedwaeji_msg(result):
         elif "주의:" in line: msg += f"⚠️ {line}\n"
     return msg
 
+def format_image_msg(result):
+    판단아이콘 = "🟢" if "상승우세" in result else "🔴" if "하락우세" in result else "🟡"
+    대응아이콘 = "⚡" if "지금진입" in result else "🚨" if "손절필요" in result else "👀"
+    msg = f"📈 <b>차트 이미지 분석</b>\n\n"
+    lines = result.strip().split('\n')
+    for line in lines:
+        if not line.strip(): continue
+        if "코인:" in line: msg += f"🪙 {line}\n"
+        elif "시간봉:" in line: msg += f"⏱ {line}\n"
+        elif "패턴:" in line: msg += f"📊 {line}\n"
+        elif "현재위치:" in line: msg += f"📍 {line}\n\n"
+        elif "판단:" in line: msg += f"{판단아이콘} {line}\n"
+        elif "대응:" in line: msg += f"{대응아이콘} {line}\n\n"
+        elif "핵심근거:" in line: msg += f"🔍 {line}\n"
+        elif "주의:" in line: msg += f"⚠️ {line}\n"
+    return msg
+
 async def main():
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     await client.start()
@@ -178,7 +205,6 @@ async def main():
         text = event.message.text or ""
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-        # 이미지 분석
         if event.message.photo:
             send_telegram("📸 차트 이미지 분석 중...")
             image_bytes = await event.message.download_media(bytes)
@@ -208,10 +234,11 @@ async def main():
         match = re.search(r'#([A-Za-z가-힣]{2,15})', text)
         if match:
             ticker = match.group(1)
-            send_telegram(f"🔍 {ticker} 분석 중...")
-            result = analyze_stock(ticker, text)
-            send_telegram(format_stock_msg(ticker, result))
-            save_to_sheets("급등주", [now, ticker, text[:100], result])
+            send_telegram(f"🔍 {ticker} 실시간 가격 조회 중...")
+            current_price = get_current_price(ticker)
+            result = analyze_stock(ticker, text, current_price)
+            send_telegram(format_stock_msg(ticker, result, current_price))
+            save_to_sheets("급등주", [now, ticker, str(current_price), result])
 
     @client.on(events.NewMessage(pattern='/복기'))
     async def bokgi_handler(event):
