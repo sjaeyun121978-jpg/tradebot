@@ -27,26 +27,26 @@ GAEDWAEJI_KEYWORDS = ["일봉","주봉","월봉","시나리오","1안","2안","3
 
 def get_current_price(symbol):
     try:
-        symbol_lower = symbol.lower()
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={symbol_lower}&vs_currencies=usd"
+        # Bybit API로 실시간 가격 조회
+        symbol_upper = symbol.upper() + "USDT"
+        url = f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol_upper}"
         r = requests.get(url, timeout=5)
         data = r.json()
-        if symbol_lower in data:
-            return data[symbol_lower]["usd"]
-        # 심볼로 검색
-        search_url = f"https://api.coingecko.com/api/v3/search?query={symbol}"
-        r2 = requests.get(search_url, timeout=5)
-        results = r2.json().get("coins", [])
-        if results:
-            coin_id = results[0]["id"]
-            url2 = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
-            r3 = requests.get(url2, timeout=5)
-            data2 = r3.json()
-            if coin_id in data2:
-                return data2[coin_id]["usd"]
+        if data.get("retCode") == 0:
+            items = data.get("result", {}).get("list", [])
+            if items:
+                return float(items[0]["lastPrice"])
+        # 선물로 재시도
+        url2 = f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol_upper}"
+        r2 = requests.get(url2, timeout=5)
+        data2 = r2.json()
+        if data2.get("retCode") == 0:
+            items2 = data2.get("result", {}).get("list", [])
+            if items2:
+                return float(items2[0]["lastPrice"])
         return None
     except Exception as e:
-        print(f"가격 조회 실패: {e}")
+        print(f"Bybit 가격 조회 실패: {e}")
         return None
 
 def get_sheets_client():
