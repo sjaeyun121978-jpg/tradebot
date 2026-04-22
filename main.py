@@ -2,6 +2,7 @@ import asyncio
 import re
 import os
 import json
+import base64
 import requests
 import anthropic
 import gspread
@@ -73,6 +74,37 @@ def is_info_message(text):
 def is_gaedwaeji_message(text):
     return any(kw in text for kw in GAEDWAEJI_KEYWORDS)
 
+def analyze_image(image_bytes, caption=""):
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        image_data = base64.standard_b64encode(image_bytes).decode("utf-8")
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_data}},
+            {"type": "text", "text": f"당신은 전문 암호화폐 트레이더입니다.\n차트 이미지를 분석하세요.\n캡션: {caption}\n\n아래 형식으로만 답해:\n코인:\n시간봉:\n패턴:\n현재위치:\n판단: 상승우세 또는 하락우세 또는 중립관망\n대응: 지금진입 또는 손절필요 또는 관망대기\n핵심근거: 한줄\n주의: 한줄"}
+        ]
+        result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=500, messages=[{"role":"user","content":content}])
+        return result.content[0].text
+    except Exception as e:
+        print(f"이미지 분석 실패: {e}")
+        return None
+
+def format_image_msg(result):
+    판단아이콘 = "🟢" if "상승우세" in result else "🔴" if "하락우세" in result else "🟡"
+    대응아이콘 = "⚡" if "지금진입" in result else "🚨" if "손절필요" in result else "👀"
+    msg = f"📈 <b>차트 이미지 분석</b>\n\n"
+    lines = result.strip().split('\n')
+    for line in lines:
+        if not line.strip(): continue
+        if "코인:" in line: msg += f"🪙 {line}\n"
+        elif "시간봉:" in line: msg += f"⏱ {line}\n"
+        elif "패턴:" in line: msg += f"📊 {line}\n"
+        elif "현재위치:" in line: msg += f"📍 {line}\n\n"
+        elif "판단:" in line: msg += f"{판단아이콘} {line}\n"
+        elif "대응:" in line: msg += f"{대응아이콘} {line}\n\n"
+        elif "핵심근거:" in line: msg += f"🔍 {line}\n"
+        elif "주의:" in line: msg += f"⚠️ {line}\n"
+    return msg
+
 def analyze_stock(ticker, comment):
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
     result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=300,
@@ -139,26 +171,40 @@ def format_gaedwaeji_msg(result):
 async def main():
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     await client.start()
-    send_telegram("✅ 모니터링 시작! 멍꼴단 감시 중...")
+    send_telegram("✅ 모니터링 시작! 멍꼴단+캔들의신 감시 중...")
 
     @client.on(events.NewMessage(chats=CHANNEL_IDS))
     async def handler(event):
-        text = event.message.text
+        text = event.message.text or ""
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        # 이미지 분석
+        if event.message.photo:
+            send_telegram("📸 차트 이미지 분석 중...")
+            image_bytes = await event.message.download_media(bytes)
+            result = analyze_image(image_bytes, caption=text)
+            if result:
+                send_telegram(format_image_msg(result))
+                save_to_sheets("이미지분석", [now, text[:100], result])
+            return
+
         if not text:
             return
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
         if is_info_message(text):
             send_telegram("🔍 시장 정보 분석 중...")
             result = analyze_info(text)
             send_telegram(format_info_msg(result))
             save_to_sheets("정보분석", [now, text[:100], result])
             return
+
         if is_gaedwaeji_message(text):
             send_telegram("🐷 개돼지기법 기준 분석 중...")
             result = analyze_gaedwaeji(text)
             send_telegram(format_gaedwaeji_msg(result))
             save_to_sheets("개돼지기준", [now, text[:200], result])
             return
+
         match = re.search(r'#([A-Za-z가-힣]{2,15})', text)
         if match:
             ticker = match.group(1)
