@@ -23,7 +23,7 @@ GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID")
 CHANNEL_IDS = [-1003332441222, -1002931696159, "godofcandle"]
 
 INFO_KEYWORDS = ["오더북","매물대","히트맵","체결","위험","유효하지 않음","지지","저항","돌파","이탈","롱","숏","청산","펀딩","미결제약정","파동","엘리엇","추세","채널","다이버전스"]
-GAEDWAEJI_KEYWORDS = ["기준","일봉","주봉","월봉","시나리오","1안","2안","3안","전고"]
+GAEDWAEJI_KEYWORDS = ["일봉","주봉","월봉","시나리오","1안","2안","3안","전고"]
 
 def get_current_price(symbol):
     try:
