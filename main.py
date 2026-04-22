@@ -21,19 +21,13 @@ GOOGLE_SHEETS_ID = os.environ.get("GOOGLE_SHEETS_ID")
 
 CHANNEL_IDS = [-1003332441222, -1002931696159]
 
-INFO_KEYWORDS = [
-    "오더북", "매물대", "히트맵", "체결", "위험",
-    "유효하지 않음", "지지", "저항", "돌파", "이탈",
-    "롱", "숏", "청산", "펀딩", "미결제약정",
-    "파동", "엘리엇", "추세", "채널", "다이버전스"
-]
-
-GAEDWAEJI_KEYWORDS = ["기준", "일봉", "주봉", "월봉", "시나리오", "1안", "2안", "3안", "전고"]
+INFO_KEYWORDS = ["오더북","매물대","히트맵","체결","위험","유효하지 않음","지지","저항","돌파","이탈","롱","숏","청산","펀딩","미결제약정","파동","엘리엇","추세","채널","다이버전스"]
+GAEDWAEJI_KEYWORDS = ["기준","일봉","주봉","월봉","시나리오","1안","2안","3안","전고"]
 
 def get_sheets_client():
     try:
         key_data = json.loads(GOOGLE_SHEETS_KEY)
-        scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        scopes = ["https://spreadsheets.google.com/feeds","https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(key_data, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
@@ -71,11 +65,7 @@ def get_recent_records(sheet_name, limit=5):
 
 def send_telegram(msg, chat_id=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": chat_id or CHAT_ID,
-        "text": msg,
-        "parse_mode": "HTML"
-    })
+    requests.post(url, data={"chat_id": chat_id or CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
 def is_info_message(text):
     return any(kw in text for kw in INFO_KEYWORDS)
@@ -85,72 +75,20 @@ def is_gaedwaeji_message(text):
 
 def analyze_stock(ticker, comment):
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    result = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=300,
-        messages=[{"role": "user", "content": f"""
-종목: {ticker}
-코멘트: {comment}
-
-아래 형식으로만 답해:
-판단: 지금진입가능 또는 눌림대기 또는 진입금지
-진입가:
-손절가:
-1차타깃:
-2차타깃:
-핵심: 한줄요약
-주의: 한줄주의사항
-"""}]
-    )
+    result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=300,
+        messages=[{"role":"user","content":f"종목: {ticker}\n코멘트: {comment}\n\n아래 형식으로만 답해:\n판단: 지금진입가능 또는 눌림대기 또는 진입금지\n진입가:\n손절가:\n1차타깃:\n2차타깃:\n핵심: 한줄요약\n주의: 한줄주의사항"}])
     return result.content[0].text
 
 def analyze_info(text):
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    result = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=500,
-        messages=[{"role": "user", "content": f"""
-당신은 전문 암호화폐 트레이더입니다.
-아래 정보성 메시지를 분석하여 판단하세요.
-
-메시지 내용:
-{text}
-
-아래 형식으로만 답해:
-코인:
-상황: 한줄요약
-판단: 상승우세 또는 하락우세 또는 중립관망
-대응: 지금진입 또는 손절필요 또는 관망대기
-핵심근거: 기술적 근거 한줄
-주의사항: 한줄
-"""}]
-    )
+    result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=500,
+        messages=[{"role":"user","content":f"당신은 전문 암호화폐 트레이더입니다.\n메시지:\n{text}\n\n아래 형식으로만 답해:\n코인:\n상황: 한줄요약\n판단: 상승우세 또는 하락우세 또는 중립관망\n대응: 지금진입 또는 손절필요 또는 관망대기\n핵심근거: 기술적 근거 한줄\n주의사항: 한줄"}])
     return result.content[0].text
 
 def analyze_gaedwaeji(text):
     client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    result = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=600,
-        messages=[{"role": "user", "content": f"""
-당신은 전문 암호화폐 트레이더입니다.
-아래는 개돼지기법 채널의 기준 시나리오 게시글입니다.
-
-게시글:
-{text}
-
-아래 형식으로만 답해:
-코인:
-시간봉:
-기준일:
-1안:
-2안:
-3안:
-핵심방향:
-전고A:
-주의:
-"""}]
-    )
+    result = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=600,
+        messages=[{"role":"user","content":f"당신은 전문 암호화폐 트레이더입니다.\n개돼지기법 기준 시나리오:\n{text}\n\n아래 형식으로만 답해:\n코인:\n시간봉:\n기준일:\n1안:\n2안:\n3안:\n핵심방향:\n전고A:\n주의:"}])
     return result.content[0].text
 
 def format_stock_msg(ticker, result):
@@ -158,16 +96,94 @@ def format_stock_msg(ticker, result):
     lines = result.strip().split('\n')
     msg = f"⚡ <b>{ticker}</b>\n\n"
     for line in lines:
-        if "판단:" in line:
-            msg += f"{판단아이콘} {line.split(':')[1].strip()}\n\n"
-        elif "진입가:" in line:
-            msg += f"진입: {line.split(':')[1].strip()}\n"
-        elif "손절가:" in line:
-            msg += f"손절: {line.split(':')[1].strip()}\n"
-        elif "1차타깃:" in line:
-            msg += f"1차: {line.split(':')[1].strip()}\n"
-        elif "2차타깃:" in line:
-            msg += f"2차: {line.split(':')[1].strip()}\n"
-        elif "핵심:" in line:
-            msg += f"\n📌 {line.split(':')[1].strip()}\n"
-        el
+        if "판단:" in line: msg += f"{판단아이콘} {line.split(':')[1].strip()}\n\n"
+        elif "진입가:" in line: msg += f"진입: {line.split(':')[1].strip()}\n"
+        elif "손절가:" in line: msg += f"손절: {line.split(':')[1].strip()}\n"
+        elif "1차타깃:" in line: msg += f"1차: {line.split(':')[1].strip()}\n"
+        elif "2차타깃:" in line: msg += f"2차: {line.split(':')[1].strip()}\n"
+        elif "핵심:" in line: msg += f"\n📌 {line.split(':')[1].strip()}\n"
+        elif "주의:" in line: msg += f"⚠️ {line.split(':')[1].strip()}\n"
+    return msg
+
+def format_info_msg(result):
+    lines = result.strip().split('\n')
+    판단아이콘 = "🟢" if "상승우세" in result else "🔴" if "하락우세" in result else "🟡"
+    대응아이콘 = "⚡" if "지금진입" in result else "🚨" if "손절필요" in result else "👀"
+    msg = f"📊 <b>시장 정보 분석</b>\n\n"
+    for line in lines:
+        if not line.strip(): continue
+        if "코인:" in line: msg += f"🪙 {line.split(':')[1].strip()}\n"
+        elif "상황:" in line: msg += f"📌 {line.split(':')[1].strip()}\n\n"
+        elif "판단:" in line: msg += f"{판단아이콘} 판단: {line.split(':')[1].strip()}\n"
+        elif "대응:" in line: msg += f"{대응아이콘} 대응: {line.split(':')[1].strip()}\n\n"
+        elif "핵심근거:" in line: msg += f"🔍 근거: {line.split(':')[1].strip()}\n"
+        elif "주의사항:" in line: msg += f"⚠️ 주의: {line.split(':')[1].strip()}\n"
+    return msg
+
+def format_gaedwaeji_msg(result):
+    msg = f"🐷 <b>개돼지기법 기준 분석</b>\n\n"
+    lines = result.strip().split('\n')
+    for line in lines:
+        if not line.strip(): continue
+        if "코인:" in line: msg += f"🪙 {line}\n"
+        elif "시간봉:" in line: msg += f"⏱ {line}\n"
+        elif "기준일:" in line: msg += f"📅 {line}\n\n"
+        elif "1안:" in line: msg += f"1️⃣ {line}\n"
+        elif "2안:" in line: msg += f"2️⃣ {line}\n"
+        elif "3안:" in line: msg += f"3️⃣ {line}\n\n"
+        elif "핵심방향:" in line: msg += f"🎯 {line}\n"
+        elif "전고A:" in line: msg += f"📍 {line}\n"
+        elif "주의:" in line: msg += f"⚠️ {line}\n"
+    return msg
+
+async def main():
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    await client.start()
+    send_telegram("✅ 모니터링 시작! 멍꼴단 감시 중...")
+
+    @client.on(events.NewMessage(chats=CHANNEL_IDS))
+    async def handler(event):
+        text = event.message.text
+        if not text:
+            return
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        if is_info_message(text):
+            send_telegram("🔍 시장 정보 분석 중...")
+            result = analyze_info(text)
+            send_telegram(format_info_msg(result))
+            save_to_sheets("정보분석", [now, text[:100], result])
+            return
+        if is_gaedwaeji_message(text):
+            send_telegram("🐷 개돼지기법 기준 분석 중...")
+            result = analyze_gaedwaeji(text)
+            send_telegram(format_gaedwaeji_msg(result))
+            save_to_sheets("개돼지기준", [now, text[:200], result])
+            return
+        match = re.search(r'#([A-Za-z가-힣]{2,15})', text)
+        if match:
+            ticker = match.group(1)
+            send_telegram(f"🔍 {ticker} 분석 중...")
+            result = analyze_stock(ticker, text)
+            send_telegram(format_stock_msg(ticker, result))
+            save_to_sheets("급등주", [now, ticker, text[:100], result])
+
+    @client.on(events.NewMessage(pattern='/복기'))
+    async def bokgi_handler(event):
+        rows = get_recent_records("개돼지기준", 3)
+        if not rows:
+            await event.respond("📭 저장된 기준 없음")
+            return
+        msg = "📋 <b>최근 개돼지 기준</b>\n\n"
+        for row in rows:
+            if row:
+                msg += f"📅 {row[0]}\n{row[2]}\n\n{'─'*20}\n\n"
+        send_telegram(msg, event.chat_id)
+
+    await client.run_until_disconnected()
+
+try:
+    asyncio.run(main())
+except Exception as e:
+    print(f"에러 발생: {e}")
+    import traceback
+    traceback.print_exc()
