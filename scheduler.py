@@ -58,9 +58,6 @@ async def run_once(symbol=DEFAULT_SYMBOL, mode="정시"):
 
 
 async def hourly_fact_analysis_loop(symbol=DEFAULT_SYMBOL):
-    # 실행 직후 1회 테스트 분석
-    await run_once(symbol, mode="즉시")
-
     while True:
         wait_seconds = seconds_until_next_hour()
 
