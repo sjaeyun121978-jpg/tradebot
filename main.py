@@ -1,14 +1,6 @@
 # main.py
-# Railway 기반 Telegram Trading Bot
-# 목표:
-# - 기존 기능 유지
-# - 캔들 캐싱
-# - API 호출 최소화
-# - 메시지 rate limit
-# - 구조 분석 주기 분리
-# - 가격 변화 없으면 분석 생략
-# - 알림 폭주 방지
-# - 무한루프 방지
+# Railway Telegram Trading Bot
+# 정시 1H 종합 전광판 확정 발송 버전
 
 import os
 import time
@@ -16,10 +8,6 @@ import traceback
 import requests
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
-
-# =========================
-# 기존 프로젝트 모듈
-# =========================
 
 try:
     import entry_timing
@@ -42,11 +30,6 @@ except Exception:
     analyzers = None
 
 try:
-    import indicators
-except Exception:
-    indicators = None
-
-try:
     import sheets
 except Exception:
     sheets = None
@@ -56,10 +39,11 @@ try:
 except Exception:
     signal_journal = None
 
+try:
+    import daily_weekly_briefing
+except Exception:
+    daily_weekly_briefing = None
 
-# =========================
-# 환경 설정
-# =========================
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -68,13 +52,11 @@ BINANCE_BASE_URL = "https://api.binance.com"
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 
-TIMEFRAMES = ["15m", "1h", "4h", "1d"]
-
 LOOP_SLEEP_SEC = int(os.getenv("LOOP_SLEEP_SEC", "20"))
 
-PRICE_SKIP_THRESHOLD = float(os.getenv("PRICE_SKIP_THRESHOLD", "0.0008"))  # 0.08%
+PRICE_SKIP_THRESHOLD = float(os.getenv("PRICE_SKIP_THRESHOLD", "0.0008"))
 
-SAME_ALERT_COOLDOWN_SEC = int(os.getenv("SAME_ALERT_COOLDOWN_SEC", "900"))  # 15분
+SAME_ALERT_COOLDOWN_SEC = int(os.getenv("SAME_ALERT_COOLDOWN_SEC", "900"))
 
 TELEGRAM_MIN_INTERVAL_SEC = float(os.getenv("TELEGRAM_MIN_INTERVAL_SEC", "1.2"))
 
@@ -83,22 +65,12 @@ MAX_LOOP_ERROR_COUNT = int(os.getenv("MAX_LOOP_ERROR_COUNT", "10"))
 KST = timezone(timedelta(hours=9))
 
 
-# =========================
-# TTL 설정
-# =========================
-
 CANDLE_TTL = {
     "15m": 60,
     "1h": 180,
     "4h": 600,
     "1d": 1800,
-}
-
-STRUCTURE_INTERVAL = {
-    "15m": 300,
-    "1h": 900,
-    "4h": 1800,
-    "1d": 3600,
+    "1w": 3600,
 }
 
 ENTRY_ANALYSIS_INTERVAL_SEC = 60
@@ -106,24 +78,21 @@ RADAR_ANALYSIS_INTERVAL_SEC = 60
 INFO_ANALYSIS_INTERVAL_SEC = 300
 
 
-# =========================
-# 전역 캐시
-# =========================
-
 candle_cache = {}
 price_cache = {}
-last_structure_run = defaultdict(float)
+
 last_entry_run = defaultdict(float)
 last_radar_run = defaultdict(float)
 last_info_run = defaultdict(float)
+
 last_alert_sent = {}
 last_telegram_sent_at = 0.0
+
+last_hourly_dashboard_sent = {}
+last_daily_weekly_briefing_date = {}
+
 loop_error_count = 0
 
-
-# =========================
-# 공통 유틸
-# =========================
 
 def now_kst():
     return datetime.now(KST)
@@ -166,10 +135,6 @@ def get_func(module, candidates):
     return None
 
 
-# =========================
-# Binance API
-# =========================
-
 def fetch_klines(symbol, interval, limit=200):
     url = f"{BINANCE_BASE_URL}/api/v3/klines"
     params = {
@@ -183,6 +148,7 @@ def fetch_klines(symbol, interval, limit=200):
     data = r.json()
 
     candles = []
+
     for item in data:
         candles.append({
             "open_time": item[0],
@@ -205,11 +171,11 @@ def get_cached_candles(symbol, interval, limit=200):
     cached = candle_cache.get(key)
 
     if cached:
-        age = current - cached["ts"]
-        if age < ttl:
+        if current - cached["ts"] < ttl:
             return cached["data"]
 
     candles = fetch_klines(symbol, interval, limit)
+
     candle_cache[key] = {
         "ts": current,
         "data": candles,
@@ -218,16 +184,22 @@ def get_cached_candles(symbol, interval, limit=200):
     return candles
 
 
+def collect_candles(symbol):
+    return {
+        "15m": get_cached_candles(symbol, "15m", 200),
+        "1h": get_cached_candles(symbol, "1h", 200),
+        "4h": get_cached_candles(symbol, "4h", 200),
+        "1d": get_cached_candles(symbol, "1d", 200),
+        "1w": get_cached_candles(symbol, "1w", 100),
+    }
+
+
 def get_current_price(symbol):
     candles = get_cached_candles(symbol, "15m", 100)
     if not candles:
         return None
     return candles[-1]["close"]
 
-
-# =========================
-# 분석 실행 여부 판단
-# =========================
 
 def should_skip_by_price_change(symbol, price):
     if price is None:
@@ -264,12 +236,6 @@ def should_run_interval(cache, key, interval_sec):
     return False
 
 
-def should_run_structure(symbol, timeframe):
-    key = f"{symbol}:{timeframe}"
-    interval = STRUCTURE_INTERVAL.get(timeframe, 900)
-    return should_run_interval(last_structure_run, key, interval)
-
-
 def should_run_entry(symbol):
     return should_run_interval(last_entry_run, symbol, ENTRY_ANALYSIS_INTERVAL_SEC)
 
@@ -281,10 +247,6 @@ def should_run_radar(symbol):
 def should_run_info(symbol):
     return should_run_interval(last_info_run, symbol, INFO_ANALYSIS_INTERVAL_SEC)
 
-
-# =========================
-# Telegram 발송 제한
-# =========================
 
 def make_alert_key(symbol, alert_type, direction=None):
     direction = direction or "NONE"
@@ -352,10 +314,6 @@ def send_alert_safely(symbol, alert_type, message, direction=None, force=False):
     return telegram_send(message)
 
 
-# =========================
-# 기존 기능 연결부
-# =========================
-
 def run_structure_analysis(symbol, candles_by_tf):
     func = get_func(structure_analyzer, [
         "analyze_structure",
@@ -417,6 +375,7 @@ def run_general_analyzers(symbol, candles_by_tf, structure_result=None):
     for fname in candidate_funcs:
         if hasattr(analyzers, fname):
             func = getattr(analyzers, fname)
+
             try:
                 result = func(symbol, candles_by_tf, structure_result)
             except TypeError:
@@ -483,10 +442,6 @@ def record_to_journal(symbol, event_type, payload):
     )
 
 
-# =========================
-# 결과 해석 보조
-# =========================
-
 def extract_message(result):
     if result is None:
         return None
@@ -526,7 +481,7 @@ def extract_direction(result):
     if "SHORT" in text or "숏" in text:
         return "SHORT"
 
-    if "WAIT" in text or "대기" in text or "박스권" in text:
+    if "WAIT" in text or "대기" in text or "관망" in text:
         return "WAIT"
 
     return None
@@ -548,161 +503,206 @@ def extract_alert_type(result, default_type):
     if "PRE-ENTRY" in text or "PRE ENTRY" in text:
         return "PRE_ENTRY"
     if "RADAR" in text or "레이더" in text:
-        return "RADAR"
-    if "WAIT" in text or "박스권" in text:
+        return "ENTRY_RADAR"
+    if "DAILY" in text or "일봉" in text:
+        return "DAILY_BRIEFING"
+    if "WEEKLY" in text or "주간" in text:
+        return "WEEKLY_PROGRESS_BRIEFING"
+    if "WAIT" in text or "박스권" in text or "관망" in text:
         return "WAIT"
 
     return default_type
 
 
-# =========================
-# 심볼별 메인 사이클
-# =========================
+def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
+    current = now_kst()
 
-def collect_candles(symbol):
-    return {
-        "15m": get_cached_candles(symbol, "15m", 200),
-        "1h": get_cached_candles(symbol, "1h", 200),
-        "4h": get_cached_candles(symbol, "4h", 200),
-        "1d": get_cached_candles(symbol, "1d", 200),
-    }
-
-
-def run_symbol_cycle(symbol):
-    log(f"[START] {symbol} cycle")
-
-    price = get_current_price(symbol)
-
-    if price is None:
-        log(f"[SKIP] {symbol} price 없음")
+    # 매 정각 00~04분 사이 1회 발송
+    if current.minute > 4:
         return
 
-    price_skip = should_skip_by_price_change(symbol, price)
+    hour_key = current.strftime("%Y-%m-%d %H")
+    cache_key = f"{symbol}:{hour_key}"
 
-    candles_by_tf = collect_candles(symbol)
-
-    structure_result = None
-
-    # 1. 정시 팩트기반구조분석
-    for tf in TIMEFRAMES:
-        if should_run_structure(symbol, tf):
-            log(f"[STRUCTURE] {symbol} {tf}")
-
-            structure_result = run_structure_analysis(symbol, candles_by_tf)
-
-            msg = extract_message(structure_result)
-            direction = extract_direction(structure_result)
-
-            if msg:
-                send_alert_safely(
-                    symbol=symbol,
-                    alert_type=f"STRUCTURE_{tf}",
-                    message=msg,
-                    direction=direction,
-                    force=False,
-                )
-
-                record_to_sheet(symbol, f"STRUCTURE_{tf}", structure_result)
-                record_to_journal(symbol, f"STRUCTURE_{tf}", structure_result)
-
-            break
-
-    # 가격 변화 없으면 진입 분석만 생략
-    # 구조 분석, 정시 분석은 위에서 이미 주기 기반으로 처리
-    if price_skip:
-        log(f"[SKIP ENTRY] {symbol} price change too small")
+    if last_hourly_dashboard_sent.get(cache_key):
         return
 
-    # 2. 진입 레이더
-    if should_run_radar(symbol):
-        radar_func = get_func(entry_timing, [
-            "run_entry_radar",
-            "entry_radar",
-            "analyze_radar",
-            "check_radar",
-        ])
+    log(f"[HOURLY DASHBOARD] {symbol} {hour_key}")
 
-        radar_result = None
+    structure_result = run_structure_analysis(symbol, candles_by_tf)
 
-        if radar_func:
-            try:
-                radar_result = radar_func(symbol, candles_by_tf, structure_result)
-            except TypeError:
-                radar_result = safe_call(
-                    radar_func,
-                    symbol,
-                    candles_by_tf,
-                    default=None,
-                    name="entry_radar"
-                )
+    msg = extract_message(structure_result)
+    direction = extract_direction(structure_result)
 
-        if radar_result:
-            msg = extract_message(radar_result)
-            direction = extract_direction(radar_result)
+    if msg:
+        send_alert_safely(
+            symbol=symbol,
+            alert_type="HOURLY_DASHBOARD",
+            message=msg,
+            direction=direction,
+            force=True,
+        )
 
-            if msg:
-                send_alert_safely(
-                    symbol=symbol,
-                    alert_type="ENTRY_RADAR",
-                    message=msg,
-                    direction=direction,
-                    force=False,
-                )
+        record_to_sheet(symbol, "HOURLY_DASHBOARD", structure_result)
+        record_to_journal(symbol, "HOURLY_DASHBOARD", structure_result)
 
-                record_to_sheet(symbol, "ENTRY_RADAR", radar_result)
-                record_to_journal(symbol, "ENTRY_RADAR", radar_result)
-
-    # 3. PRE-ENTRY / PULLBACK ENTRY / REAL ENTRY
-    if should_run_entry(symbol):
-        entry_result = run_entry_timing(symbol, candles_by_tf, structure_result)
-
-        if entry_result:
-            results = entry_result if isinstance(entry_result, list) else [entry_result]
-
-            for result in results:
-                msg = extract_message(result)
-                direction = extract_direction(result)
-                alert_type = extract_alert_type(result, "ENTRY")
-
-                if msg:
-                    send_alert_safely(
-                        symbol=symbol,
-                        alert_type=alert_type,
-                        message=msg,
-                        direction=direction,
-                        force=False,
-                    )
-
-                    record_to_sheet(symbol, alert_type, result)
-                    record_to_journal(symbol, alert_type, result)
-
-    # 4. 멍꿀, 캔들의신, 개돼지기법, 정보성 메시지 분석
-    if should_run_info(symbol):
-        analyzer_results = run_general_analyzers(symbol, candles_by_tf, structure_result)
-
-        for result in analyzer_results:
-            msg = extract_message(result)
-            direction = extract_direction(result)
-            alert_type = extract_alert_type(result, "INFO_ANALYSIS")
-
-            if msg:
-                send_alert_safely(
-                    symbol=symbol,
-                    alert_type=alert_type,
-                    message=msg,
-                    direction=direction,
-                    force=False,
-                )
-
-                record_to_sheet(symbol, alert_type, result)
-                record_to_journal(symbol, alert_type, result)
-
-    log(f"[END] {symbol} cycle")
+    last_hourly_dashboard_sent[cache_key] = True
 
 
-# =========================
-# 스케줄러 호환
-# =========================
+def run_daily_weekly_briefings_if_needed(symbol, candles_by_tf):
+    if daily_weekly_briefing is None:
+        return
+
+    current = now_kst()
+
+    # 매일 오전 9시 00~09분 사이 1회 발송
+    if current.hour != 9:
+        return
+
+    if current.minute > 9:
+        return
+
+    today_key = current.strftime("%Y-%m-%d")
+    cache_key = f"{symbol}:{today_key}"
+
+    if last_daily_weekly_briefing_date.get(cache_key):
+        return
+
+    func = get_func(daily_weekly_briefing, [
+        "run_all_briefings",
+    ])
+
+    if func is None:
+        return
+
+    log(f"[DAILY/WEEKLY BRIEFING] {symbol} {today_key}")
+
+    results = safe_call(
+        func,
+        symbol,
+        candles_by_tf,
+        default=[],
+        name="daily_weekly_briefing.run_all_briefings"
+    )
+
+    if not results:
+        return
+
+    for result in results:
+        msg = extract_message(result)
+        alert_type = extract_alert_type(result, "BRIEFING")
+
+        if msg:
+            send_alert_safely(
+                symbol=symbol,
+                alert_type=alert_type,
+                message=msg,
+                direction="INFO",
+                force=True,
+            )
+
+            record_to_sheet(symbol, alert_type, result)
+            record_to_journal(symbol, alert_type, result)
+
+    last_daily_weekly_briefing_date[cache_key] = True
+
+
+def run_entry_radar_if_needed(symbol, candles_by_tf, structure_result=None):
+    if not should_run_radar(symbol):
+        return
+
+    radar_func = get_func(entry_timing, [
+        "run_entry_radar",
+        "entry_radar",
+        "analyze_radar",
+        "check_radar",
+    ])
+
+    if radar_func is None:
+        return
+
+    try:
+        radar_result = radar_func(symbol, candles_by_tf, structure_result)
+    except TypeError:
+        radar_result = safe_call(
+            radar_func,
+            symbol,
+            candles_by_tf,
+            default=None,
+            name="entry_radar"
+        )
+
+    if not radar_result:
+        return
+
+    msg = extract_message(radar_result)
+    direction = extract_direction(radar_result)
+
+    if msg:
+        send_alert_safely(
+            symbol=symbol,
+            alert_type="ENTRY_RADAR",
+            message=msg,
+            direction=direction,
+            force=False,
+        )
+
+        record_to_sheet(symbol, "ENTRY_RADAR", radar_result)
+        record_to_journal(symbol, "ENTRY_RADAR", radar_result)
+
+
+def run_entry_timing_if_needed(symbol, candles_by_tf, structure_result=None):
+    if not should_run_entry(symbol):
+        return
+
+    entry_result = run_entry_timing(symbol, candles_by_tf, structure_result)
+
+    if not entry_result:
+        return
+
+    results = entry_result if isinstance(entry_result, list) else [entry_result]
+
+    for result in results:
+        msg = extract_message(result)
+        direction = extract_direction(result)
+        alert_type = extract_alert_type(result, "ENTRY")
+
+        if msg:
+            send_alert_safely(
+                symbol=symbol,
+                alert_type=alert_type,
+                message=msg,
+                direction=direction,
+                force=False,
+            )
+
+            record_to_sheet(symbol, alert_type, result)
+            record_to_journal(symbol, alert_type, result)
+
+
+def run_info_analyzers_if_needed(symbol, candles_by_tf, structure_result=None):
+    if not should_run_info(symbol):
+        return
+
+    analyzer_results = run_general_analyzers(symbol, candles_by_tf, structure_result)
+
+    for result in analyzer_results:
+        msg = extract_message(result)
+        direction = extract_direction(result)
+        alert_type = extract_alert_type(result, "INFO_ANALYSIS")
+
+        if msg:
+            send_alert_safely(
+                symbol=symbol,
+                alert_type=alert_type,
+                message=msg,
+                direction=direction,
+                force=False,
+            )
+
+            record_to_sheet(symbol, alert_type, result)
+            record_to_journal(symbol, alert_type, result)
+
 
 def run_scheduler_tasks():
     if scheduler is None:
@@ -719,44 +719,66 @@ def run_scheduler_tasks():
         safe_call(func, default=None, name="scheduler")
 
 
-# =========================
-# 헬스 체크
-# =========================
+def run_symbol_cycle(symbol):
+    log(f"[START] {symbol} cycle")
+
+    candles_by_tf = collect_candles(symbol)
+
+    # 1. 정시 1H 종합 전광판
+    # 가격 변화 스킵, 알림 쿨다운, 15m break 영향 받지 않음
+    run_hourly_dashboard_if_needed(symbol, candles_by_tf)
+
+    # 2. 매일 9시 일봉/주간 브리핑
+    run_daily_weekly_briefings_if_needed(symbol, candles_by_tf)
+
+    price = get_current_price(symbol)
+
+    if price is None:
+        log(f"[SKIP] {symbol} price 없음")
+        return
+
+    price_skip = should_skip_by_price_change(symbol, price)
+
+    # 3. 진입레이더는 가격 변화가 작으면 생략
+    if price_skip:
+        log(f"[SKIP ENTRY] {symbol} price change too small")
+        return
+
+    # 4. 진입레이더
+    run_entry_radar_if_needed(symbol, candles_by_tf)
+
+    # 5. PRE / PULLBACK / REAL
+    run_entry_timing_if_needed(symbol, candles_by_tf)
+
+    # 6. 멍꿀, 캔들의신, 개돼지기법, 정보성 메시지
+    run_info_analyzers_if_needed(symbol, candles_by_tf)
+
+    log(f"[END] {symbol} cycle")
+
 
 def send_startup_message():
     msg = (
         "✅ Railway Telegram Trading Bot 시작\n\n"
-        "기능 유지:\n"
-        "1. ETH/BTC 정시 팩트기반구조분석\n"
-        "2. 진입 레이더\n"
-        "3. PRE-ENTRY\n"
-        "4. PULLBACK ENTRY\n"
-        "5. REAL ENTRY\n"
-        "6. 롱/숏 양방향 점수 판단\n"
-        "7. 박스권 WAIT 처리\n"
-        "8. 점수 차이 15% 미만 진입 금지\n"
-        "9. 같은 방향 알림 15분 제한\n"
-        "10. 멍꿀 급등주 분석\n"
-        "11. 캔들의신 관점 해석\n"
-        "12. 개돼지기법 분석\n"
-        "13. 정보성 메시지 분석\n"
-        "14. 구글시트 신호기록\n"
-        "15. 무한루프 방지\n\n"
-        "최적화:\n"
+        "정시 기능:\n"
+        "- 매 정각 1H 종합 전광판 발송\n"
+        "- 매일 09시 일봉 브리핑 발송\n"
+        "- 매일 09시 주간 진행 브리핑 발송\n\n"
+        "진입 기능:\n"
+        "- 진입레이더\n"
+        "- PRE-ENTRY\n"
+        "- PULLBACK ENTRY\n"
+        "- REAL ENTRY\n\n"
+        "보호 기능:\n"
         "- 캔들 캐싱\n"
         "- API 호출 최소화\n"
         "- 메시지 rate limit\n"
-        "- 구조 분석 주기 분리\n"
         "- 가격 변화 없으면 진입 분석 생략\n"
-        "- 알림 폭주 방지"
+        "- 알림 폭주 방지\n"
+        "- 무한루프 방지"
     )
 
     telegram_send(msg)
 
-
-# =========================
-# 메인 루프
-# =========================
 
 def main_loop():
     global loop_error_count
