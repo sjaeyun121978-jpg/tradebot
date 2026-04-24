@@ -4,42 +4,40 @@ from datetime import datetime
 from sheets import save_to_sheets
 
 
-SIGNAL_SHEET_NAME = "신호기록"
+SHEET_NAME = "신호기록"
 
 
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def create_signal_id(symbol, signal, entry_level):
-    short_uuid = str(uuid.uuid4())[:8]
-    return f"{symbol}_{signal}_{entry_level}_{short_uuid}"
+def generate_id(symbol, signal, level):
+    return f"{symbol}_{signal}_{level}_{str(uuid.uuid4())[:8]}"
 
 
 def record_signal(
     symbol,
     signal,
-    entry_level,
-    price,
-    score,
-    stop_loss,
-    tp1,
-    tp2,
-    detail,
-    raw_message
+    level=None,
+    entry_level=None,
+    price=None,
+    score=None,
+    stop_loss=None,
+    tp1=None,
+    tp2=None,
+    detail="",
+    raw_message=""
 ):
-    """
-    알림 발생 시 Google Sheets에 자동 기록
-    """
+    final_level = level if level is not None else entry_level
 
-    signal_id = create_signal_id(symbol, signal, entry_level)
+    signal_id = generate_id(symbol, signal, final_level)
 
     row = [
         signal_id,
         now_str(),
         symbol,
         signal,
-        entry_level,
+        final_level,
         price,
         score,
         stop_loss,
@@ -47,13 +45,13 @@ def record_signal(
         tp2,
         detail,
         raw_message,
-        "대기",
+        "WAIT",
         "",
         "",
         "",
         "",
     ]
 
-    save_to_sheets(SIGNAL_SHEET_NAME, row)
+    save_to_sheets(SHEET_NAME, row)
 
     return signal_id
