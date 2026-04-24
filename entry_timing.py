@@ -5,18 +5,17 @@ def judge_entry_timing(symbol, price, indicators):
         return None
 
     signal = debug["signal"]
+    entry_level = debug["entry_level"]
 
     if signal not in ["LONG", "SHORT"]:
         return None
-
-    entry_level = debug["entry_level"]
 
     if entry_level not in ["PRE", "PULLBACK", "REAL"]:
         return None
 
     if entry_level == "REAL":
         title = "🔴 REAL ENTRY"
-        tail = "🔥 가격 기준 트리거 충족. 진입 가능"
+        tail = "🔥 핵심 가격 트리거 충족. 진입 가능"
     elif entry_level == "PULLBACK":
         title = "🟢 PULLBACK ENTRY"
         tail = "✅ 돌파/이탈 후 눌림 확인. 진입 가능"
@@ -91,6 +90,23 @@ def get_entry_debug_status(symbol, price, indicators):
     long_reasons = []
     short_reasons = []
 
+    is_box = (
+        "박스" in s15
+        or "횡보" in s15
+        or "박스" in s1h
+        or "횡보" in s1h
+    )
+
+    long_structure = (
+        "HH/HL" in s15 or "상승" in s15
+        or "HH/HL" in s1h or "상승" in s1h
+    )
+
+    short_structure = (
+        "LH/LL" in s15 or "하락" in s15
+        or "LH/LL" in s1h or "하락" in s1h
+    )
+
     # 거래량
     if vol >= 1.2:
         long_score += 20
@@ -141,16 +157,6 @@ def get_entry_debug_status(symbol, price, indicators):
         short_reasons.append(f"❌ CCI {cci} 숏 부족")
 
     # 구조
-    long_structure = (
-        "HH/HL" in s15 or "상승" in s15
-        or "HH/HL" in s1h or "상승" in s1h
-    )
-
-    short_structure = (
-        "LH/LL" in s15 or "하락" in s15
-        or "LH/LL" in s1h or "하락" in s1h
-    )
-
     if long_structure:
         long_score += 15
         long_reasons.append("✅ 단기/1H 상승 구조")
@@ -163,6 +169,13 @@ def get_entry_debug_status(symbol, price, indicators):
     else:
         short_reasons.append("❌ 하락 구조 미확정")
 
+    # 박스권 감점
+    if is_box:
+        long_score -= 15
+        short_score -= 15
+        long_reasons.append("⚠️ 박스권 감지 → 롱 감점")
+        short_reasons.append("⚠️ 박스권 감지 → 숏 감점")
+
     # 4H 역방향 감점
     if "하락" in s4h or "LH/LL" in s4h:
         long_score -= 10
@@ -172,11 +185,10 @@ def get_entry_debug_status(symbol, price, indicators):
         short_score -= 10
         short_reasons.append("⚠️ 4H 상승 구조 → 숏 감점")
 
-    # 가격 기반 핵심 트리거
+    # 가격 트리거
     long_break_ok = price >= long_break
     short_break_ok = price <= short_break
 
-    # 진짜 돌파 확인
     long_breakout_confirm = (
         long_break_ok
         and vol >= 1.2
@@ -215,7 +227,7 @@ def get_entry_debug_status(symbol, price, indicators):
     else:
         short_reasons.append(f"❌ 핵심 지지 {short_break} 미이탈")
 
-    # 숏 전용 강화: 반등 실패
+    # 숏 전용 강화
     short_rebound_fail = (
         price < ema20
         and rsi < 55
@@ -227,7 +239,6 @@ def get_entry_debug_status(symbol, price, indicators):
         short_score += 10
         short_reasons.append("✅ 반등 실패 숏 조건")
 
-    # 숏 전용 강화: 고점 낮아짐
     short_lh_fail = (
         "LH" in s15
         or "LH" in s1h
@@ -239,7 +250,7 @@ def get_entry_debug_status(symbol, price, indicators):
         short_score += 10
         short_reasons.append("✅ LH 고점 낮아짐 감지")
 
-    # 돌파 후 눌림 롱
+    # 눌림 롱
     long_pullback_entry = (
         price > long_break
         and price <= long_break + pullback_range
@@ -255,7 +266,7 @@ def get_entry_debug_status(symbol, price, indicators):
         long_score += 10
         long_reasons.append("✅ 돌파 후 눌림 롱 구간")
 
-    # 이탈 후 되돌림 숏
+    # 되돌림 숏
     short_pullback_entry = (
         price < short_break
         and price >= short_break - pullback_range
@@ -287,7 +298,25 @@ def get_entry_debug_status(symbol, price, indicators):
     long_score = max(0, min(100, long_score))
     short_score = max(0, min(100, short_score))
 
-    # 최종 방향 선택
+    score_gap = abs(long_score - short_score)
+
+    if score_gap < 15:
+        return {
+            "signal": "WAIT",
+            "score": max(long_score, short_score),
+            "entry_level": "RADAR",
+            "detail": (
+                f"⚪ 박스권/방향성 부족\n"
+                f"롱 점수: {long_score}%\n"
+                f"숏 점수: {short_score}%\n"
+                f"점수 차이: {score_gap}%\n"
+                f"→ 신규 진입 금지"
+            ),
+            "stop_loss": "-",
+            "tp1": "-",
+            "tp2": "-",
+        }
+
     if long_score > short_score:
         signal = "LONG" if long_score >= 60 else "WAIT"
         score = long_score
@@ -298,7 +327,7 @@ def get_entry_debug_status(symbol, price, indicators):
         real_ok = long_breakout_confirm
         pullback_ok = long_pullback_entry
 
-    elif short_score > long_score:
+    else:
         signal = "SHORT" if short_score >= 60 else "WAIT"
         score = short_score
         detail = "\n".join(short_reasons)
@@ -308,18 +337,6 @@ def get_entry_debug_status(symbol, price, indicators):
         real_ok = short_breakdown_confirm
         pullback_ok = short_pullback_entry
 
-    else:
-        return {
-            "signal": "WAIT",
-            "score": long_score,
-            "entry_level": "RADAR",
-            "detail": "롱/숏 점수 동일 → 방향성 없음",
-            "stop_loss": "-",
-            "tp1": "-",
-            "tp2": "-",
-        }
-
-    # 알림 등급
     if signal == "WAIT":
         entry_level = "RADAR"
     elif score >= 95 and real_ok:
