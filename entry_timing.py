@@ -1,8 +1,8 @@
 def judge_entry_timing(symbol, price, indicators):
     """
-    트리거 v3
-    구조 + 파동 + RSI 다이버전스 + CCI 다이버전스 + 지표 기반 타점 판단
-    자동진입 아님. 텔레그램 알림용.
+    트리거 v4 (실전용)
+    - 구조 + 다이버전스 + 거래량 + EMA
+    - 손절 / 익절 포함
     """
 
     if not price or not indicators:
@@ -20,222 +20,203 @@ def judge_entry_timing(symbol, price, indicators):
     if None in [rsi, cci, vol, ema20, ema50]:
         return None
 
+    # =========================
+    # 코인별 기준
+    # =========================
     if symbol == "ETH":
-        support_break = 2295
-        resistance_break = 2315
-        upper_invalid = 2320
-        lower_invalid = 2290
+        support = 2295
+        resistance = 2315
+
+        long_sl = 2290
+        long_tp1 = 2325
+        long_tp2 = 2340
+
+        short_sl = 2320
+        short_tp1 = 2290
+        short_tp2 = 2275
 
     elif symbol == "BTC":
-        support_break = 77000
-        resistance_break = 78500
-        upper_invalid = 78800
-        lower_invalid = 76800
+        support = 77000
+        resistance = 78500
+
+        long_sl = 76800
+        long_tp1 = 79000
+        long_tp2 = 80500
+
+        short_sl = 78800
+        short_tp1 = 76800
+        short_tp2 = 75500
 
     else:
         return None
 
     # =========================
-    # 구조 데이터 추출
+    # 구조
     # =========================
-    tf_15m = structure.get("15M", {})
-    tf_1h = structure.get("1H", {})
-    tf_4h = structure.get("4H", {})
+    s15 = structure.get("15M", {}).get("structure", "")
+    s1h = structure.get("1H", {}).get("structure", "")
 
-    s15 = tf_15m.get("structure", "")
-    s1h = tf_1h.get("structure", "")
-    s4h = tf_4h.get("structure", "")
+    lower_bear = "LH/LL" in s15 or "하락" in s15
+    lower_bull = "HH/HL" in s15 or "상승" in s15
 
-    w15 = tf_15m.get("wave", "")
-    w1h = tf_1h.get("wave", "")
-    w4h = tf_4h.get("wave", "")
+    mid_bear = "LH/LL" in s1h or "하락" in s1h
+    mid_bull = "HH/HL" in s1h or "상승" in s1h
 
     # =========================
-    # 공통 필터
+    # 다이버전스
     # =========================
+    bull_div = rsi_div == "상승 다이버전스" or cci_div == "상승 다이버전스"
+    bear_div = rsi_div == "하락 다이버전스" or cci_div == "하락 다이버전스"
+
+    strong_bull = rsi_div == "상승 다이버전스" and cci_div == "상승 다이버전스"
+    strong_bear = rsi_div == "하락 다이버전스" and cci_div == "하락 다이버전스"
+
     volume_ok = vol >= 1.2
-    strong_volume = vol >= 1.5
-
-    bullish_div = (
-        rsi_div == "상승 다이버전스"
-        or cci_div == "상승 다이버전스"
-    )
-
-    bearish_div = (
-        rsi_div == "하락 다이버전스"
-        or cci_div == "하락 다이버전스"
-    )
-
-    strong_bullish_div = (
-        rsi_div == "상승 다이버전스"
-        and cci_div == "상승 다이버전스"
-    )
-
-    strong_bearish_div = (
-        rsi_div == "하락 다이버전스"
-        and cci_div == "하락 다이버전스"
-    )
-
-    lower_tf_bearish = (
-        "LH/LL" in s15
-        or "하락" in s15
-        or "하락" in w15
-    )
-
-    lower_tf_bullish = (
-        "HH/HL" in s15
-        or "상승" in s15
-        or "상승" in w15
-    )
-
-    mid_tf_bearish = (
-        "LH/LL" in s1h
-        or "하락" in s1h
-        or "하락" in w1h
-    )
-
-    mid_tf_bullish = (
-        "HH/HL" in s1h
-        or "상승" in s1h
-        or "상승" in w1h
-    )
-
-    high_tf_bearish = (
-        "LH/LL" in s4h
-        or "하락" in s4h
-        or "하락" in w4h
-    )
-
-    high_tf_bullish = (
-        "HH/HL" in s4h
-        or "상승" in s4h
-        or "상승" in w4h
-    )
 
     # =========================
-    # 충돌 필터
-    # =========================
-    if bullish_div and bearish_div:
-        return None
-
-    # =========================
-    # 🔴 숏 타점 1
-    # 지지 이탈 + 하락 구조 + 거래량
+    # 🔴 숏 진입
     # =========================
     if (
-        price < support_break
+        price < support
         and volume_ok
-        and rsi <= 40
+        and rsi <= 45
         and price < ema20
-        and price < ema50
-        and (lower_tf_bearish or mid_tf_bearish)
-        and not strong_bullish_div
+        and (lower_bear or mid_bear)
+        and not strong_bull
     ):
         return {
             "signal": "SHORT",
-            "type": "지지 이탈 숏",
+            "type": "지지 이탈",
             "message": (
-                f"🔴 {symbol} 숏 타점 발생\n"
-                f"유형: 지지 이탈 숏\n"
-                f"현재가: {price}\n"
-                f"거래량비율: {vol}\n"
-                f"RSI: {rsi}\n"
-                f"CCI: {cci}\n"
-                f"RSI 다이버전스: {rsi_div}\n"
-                f"CCI 다이버전스: {cci_div}\n\n"
-                f"판단: 지지 이탈 + 하락 구조 + EMA 하단\n"
-                f"행동: 숏 진입 검토\n"
-                f"무효화: {support_break} 위 재진입"
+                f"🔴 {symbol} 숏 진입 타점\n\n"
+
+                f"📌 진입 근거\n"
+                f"- 지지 {support} 이탈\n"
+                f"- 하락 구조 유지\n"
+                f"- EMA 하단\n"
+                f"- 거래량 증가\n\n"
+
+                f"📉 진입\n"
+                f"{price} 부근 숏\n\n"
+
+                f"🛑 손절\n"
+                f"{short_sl} (상단 복귀 시)\n\n"
+
+                f"🎯 익절\n"
+                f"1차: {short_tp1}\n"
+                f"2차: {short_tp2}\n\n"
+
+                f"⚠️ 진입 금지\n"
+                f"- RSI/CCI 상승 다이버전스 발생 시\n"
+                f"- 거래량 감소 시\n"
             )
         }
 
     # =========================
-    # 🔴 숏 타점 2
-    # 하락 다이버전스 + 저항 반등 실패
+    # 🔴 숏 (다이버전스)
     # =========================
     if (
-        strong_bearish_div
-        and strong_volume
+        strong_bear
+        and volume_ok
         and price < ema20
-        and price < ema50
-        and rsi < 55
-        and (lower_tf_bearish or mid_tf_bearish or high_tf_bearish)
+        and (lower_bear or mid_bear)
     ):
         return {
             "signal": "SHORT",
-            "type": "하락 다이버전스 숏",
+            "type": "다이버전스",
             "message": (
-                f"🔴 {symbol} 숏 타점 발생\n"
-                f"유형: 하락 다이버전스 숏\n"
-                f"현재가: {price}\n"
-                f"거래량비율: {vol}\n"
-                f"RSI: {rsi}\n"
-                f"CCI: {cci}\n"
-                f"RSI 다이버전스: {rsi_div}\n"
-                f"CCI 다이버전스: {cci_div}\n\n"
-                f"판단: RSI/CCI 하락 다이버전스 + EMA 저항\n"
-                f"행동: 숏 진입 검토\n"
-                f"무효화: {upper_invalid} 위 안착"
+                f"🔴 {symbol} 숏 진입 타점 (다이버전스)\n\n"
+
+                f"📌 진입 근거\n"
+                f"- RSI + CCI 하락 다이버전스\n"
+                f"- EMA 저항\n"
+                f"- 하락 구조 유지\n\n"
+
+                f"📉 진입\n"
+                f"{price} 부근 숏\n\n"
+
+                f"🛑 손절\n"
+                f"{short_sl}\n\n"
+
+                f"🎯 익절\n"
+                f"1차: {short_tp1}\n"
+                f"2차: {short_tp2}\n\n"
+
+                f"⚠️ 진입 금지\n"
+                f"- 구조 상승 전환 시\n"
             )
         }
 
     # =========================
-    # 🟢 롱 타점 1
-    # 저항 돌파 + 상승 구조 + 거래량
+    # 🟢 롱 진입
     # =========================
     if (
-        price > resistance_break
+        price > resistance
         and volume_ok
         and rsi >= 50
         and price > ema20
-        and price > ema50
-        and (lower_tf_bullish or mid_tf_bullish)
-        and not strong_bearish_div
+        and (lower_bull or mid_bull)
+        and not strong_bear
     ):
         return {
             "signal": "LONG",
-            "type": "저항 돌파 롱",
+            "type": "돌파",
             "message": (
-                f"🟢 {symbol} 롱 타점 발생\n"
-                f"유형: 저항 돌파 롱\n"
-                f"현재가: {price}\n"
-                f"거래량비율: {vol}\n"
-                f"RSI: {rsi}\n"
-                f"CCI: {cci}\n"
-                f"RSI 다이버전스: {rsi_div}\n"
-                f"CCI 다이버전스: {cci_div}\n\n"
-                f"판단: 저항 돌파 + 상승 구조 + EMA 상단\n"
-                f"행동: 롱 진입 검토\n"
-                f"무효화: {resistance_break} 아래 재이탈"
+                f"🟢 {symbol} 롱 진입 타점\n\n"
+
+                f"📌 진입 근거\n"
+                f"- 저항 {resistance} 돌파\n"
+                f"- 상승 구조\n"
+                f"- EMA 상단\n"
+                f"- 거래량 증가\n\n"
+
+                f"📈 진입\n"
+                f"{price} 부근 롱\n\n"
+
+                f"🛑 손절\n"
+                f"{long_sl}\n\n"
+
+                f"🎯 익절\n"
+                f"1차: {long_tp1}\n"
+                f"2차: {long_tp2}\n\n"
+
+                f"⚠️ 진입 금지\n"
+                f"- 하락 다이버전스 발생 시\n"
             )
         }
 
     # =========================
-    # 🟢 롱 타점 2
-    # 상승 다이버전스 + 지지 반등
+    # 🟢 롱 (다이버전스)
     # =========================
     if (
-        strong_bullish_div
-        and strong_volume
+        strong_bull
+        and volume_ok
         and price > ema20
-        and rsi >= 45
-        and (lower_tf_bullish or mid_tf_bullish or not high_tf_bearish)
+        and (lower_bull or mid_bull)
     ):
         return {
             "signal": "LONG",
-            "type": "상승 다이버전스 롱",
+            "type": "다이버전스",
             "message": (
-                f"🟢 {symbol} 롱 타점 발생\n"
-                f"유형: 상승 다이버전스 롱\n"
-                f"현재가: {price}\n"
-                f"거래량비율: {vol}\n"
-                f"RSI: {rsi}\n"
-                f"CCI: {cci}\n"
-                f"RSI 다이버전스: {rsi_div}\n"
-                f"CCI 다이버전스: {cci_div}\n\n"
-                f"판단: RSI/CCI 상승 다이버전스 + EMA20 회복\n"
-                f"행동: 롱 진입 검토\n"
-                f"무효화: {lower_invalid} 아래 이탈"
+                f"🟢 {symbol} 롱 진입 타점 (다이버전스)\n\n"
+
+                f"📌 진입 근거\n"
+                f"- RSI + CCI 상승 다이버전스\n"
+                f"- EMA 회복\n"
+                f"- 구조 유지\n\n"
+
+                f"📈 진입\n"
+                f"{price} 부근 롱\n\n"
+
+                f"🛑 손절\n"
+                f"{long_sl}\n\n"
+
+                f"🎯 익절\n"
+                f"1차: {long_tp1}\n"
+                f"2차: {long_tp2}\n\n"
+
+                f"⚠️ 진입 금지\n"
+                f"- 구조 하락 전환 시\n"
             )
         }
 
