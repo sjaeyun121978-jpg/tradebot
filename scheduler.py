@@ -7,6 +7,8 @@ from analyzers import analyze_fact
 from telegram_utils import send_telegram_message
 from sheets import save_to_sheets
 
+from structure_analyzer import analyze_market_structure
+
 
 DEFAULT_SYMBOL = "ETH"
 
@@ -28,8 +30,28 @@ async def run_once(symbol=DEFAULT_SYMBOL, mode="정시"):
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
         price = await asyncio.to_thread(get_current_price, symbol)
-        candles = await asyncio.to_thread(get_candles, symbol, "15", 60)
-        indicators = await asyncio.to_thread(calculate_indicators, candles)
+
+        candles_15m = await asyncio.to_thread(get_candles, symbol, "15", 100)
+        candles_1h = await asyncio.to_thread(get_candles, symbol, "60", 100)
+        candles_4h = await asyncio.to_thread(get_candles, symbol, "240", 100)
+        candles_1d = await asyncio.to_thread(get_candles, symbol, "D", 100)
+
+        indicators = await asyncio.to_thread(calculate_indicators, candles_15m)
+
+        structure = await asyncio.to_thread(
+            analyze_market_structure,
+            {
+                "15M": candles_15m,
+                "1H": candles_1h,
+                "4H": candles_4h,
+                "1D": candles_1d,
+            }
+        )
+
+        if indicators is None:
+            indicators = {}
+
+        indicators["structure"] = structure
 
         result = await asyncio.to_thread(
             analyze_fact,
