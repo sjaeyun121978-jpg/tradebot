@@ -1,68 +1,58 @@
+import os
 import json
 import gspread
 from google.oauth2.service_account import Credentials
 
-from config import GOOGLE_SHEETS_KEY, GOOGLE_SHEETS_ID
+
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
 
 
-def get_sheets_client():
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+
+def get_client():
+    service_account_info = json.loads(GOOGLE_SERVICE_ACCOUNT_JSON)
+
+    credentials = Credentials.from_service_account_info(
+        service_account_info,
+        scopes=SCOPES
+    )
+
+    return gspread.authorize(credentials)
+
+
+def get_spreadsheet():
+    client = get_client()
+    return client.open_by_key(SPREADSHEET_ID)
+
+
+def get_or_create_worksheet(sheet_name):
+    spreadsheet = get_spreadsheet()
+
     try:
-        if not GOOGLE_SHEETS_KEY or not GOOGLE_SHEETS_ID:
-            return None
-
-        key_data = json.loads(GOOGLE_SHEETS_KEY)
-
-        scopes = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive"
-        ]
-
-        creds = Credentials.from_service_account_info(key_data, scopes=scopes)
-
-        return gspread.authorize(creds)
-
-    except Exception as e:
-        print(f"[Sheets 연결 실패] {e}")
-        return None
+        return spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        return spreadsheet.add_worksheet(
+            title=sheet_name,
+            rows=1000,
+            cols=30
+        )
 
 
-def save_to_sheets(sheet_name, row_data):
-    try:
-        gc = get_sheets_client()
-
-        if not gc:
-            return False
-
-        sh = gc.open_by_key(GOOGLE_SHEETS_ID)
-
-        try:
-            ws = sh.worksheet(sheet_name)
-        except:
-            ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=10)
-
-        ws.append_row([str(x) for x in row_data])
-
-        return True
-
-    except Exception as e:
-        print(f"[Sheets 저장 실패] {e}")
-        return False
+def save_to_sheets(sheet_name, row):
+    worksheet = get_or_create_worksheet(sheet_name)
+    worksheet.append_row(row, value_input_option="USER_ENTERED")
 
 
-def get_recent_records(sheet_name, limit=5):
-    try:
-        gc = get_sheets_client()
+def get_recent_records(sheet_name, count=5):
+    worksheet = get_or_create_worksheet(sheet_name)
+    rows = worksheet.get_all_values()
 
-        if not gc:
-            return []
-
-        sh = gc.open_by_key(GOOGLE_SHEETS_ID)
-        ws = sh.worksheet(sheet_name)
-
-        rows = ws.get_all_values()
-
-        return rows[-limit:] if len(rows) > limit else rows
-
-    except Exception as e:
-        print(f"[Sheets 조회 실패] {e}")
+    if len(rows) <= 1:
         return []
+
+    return rows[-count:]
