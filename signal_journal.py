@@ -29,7 +29,6 @@ def record_signal(
     raw_message=""
 ):
     final_level = level if level is not None else entry_level
-
     signal_id = generate_id(symbol, signal, final_level)
 
     row = [
