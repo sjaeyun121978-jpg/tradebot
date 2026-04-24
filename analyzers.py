@@ -1,3 +1,6 @@
+from claude_client import call_claude
+
+
 def build_fact_analysis_prompt(symbol, price, indicators):
 
     ind_text = ""
@@ -12,7 +15,7 @@ EMA50: {indicators['ema50']}
 """
 
     return f"""
-너는 감이 아닌 "조건 기반"으로만 판단하는 실전 트레이더다.
+너는 감이 아닌 조건 기반으로만 판단하는 실전 트레이더다.
 
 절대 금지:
 - 감으로 판단
@@ -20,31 +23,22 @@ EMA50: {indicators['ema50']}
 - 가능성 나열
 - 장문 설명
 
-반드시 "현재 데이터 조건 충족 여부"로만 판단한다.
-
-======================
+반드시 현재 데이터 조건 충족 여부로만 판단한다.
 
 코인: {symbol}
 
 {ind_text}
 
-======================
-
-출력 형식 (절대 변경 금지):
+출력 형식 절대 변경 금지:
 
 📊 {symbol} 종합상황판
 
 📌 상태
-(현재 상태 한줄 정의 - 예: 하락추세 속 기술적 반등)
+(현재 상태 한줄 정의)
 
 🚦 방향 점수
 롱 xx% (🟢/🟡/🔴)
 숏 xx% (🟢/🟡/🔴)
-
-※ 반드시 합 100%
-
-판단 기준:
-- 추세 > 구조 > 거래량 > 보조지표 순서로 반영
 
 ⏱ 추세
 15M (🟢/🟡/🔴)
@@ -53,7 +47,7 @@ EMA50: {indicators['ema50']}
 1D (🟢/🟡/🔴)
 
 📐 구조
-(HH/HL 상승 or LH/LL 하락 or 전환초입 중 하나로 명확히)
+(HH/HL 상승 or LH/LL 하락 or 전환초입 중 하나)
 
 📊 지표
 EMA (🟢/🟡/🔴)
@@ -61,37 +55,86 @@ RSI (🟢/🟡/🔴)
 MACD (🟢/🟡/🔴)
 거래량 (🟢/🟡/🔴)
 
-판단 기준:
-- EMA 정배열 = 🟢 / 역배열 = 🔴 / 수렴 = 🟡
-- RSI 50 기준 위 = 🟢 / 아래 = 🔴 / 근접 = 🟡
-- MACD 양수 = 🟢 / 음수 = 🔴 / 초기 = 🟡
-- 거래량 평균 이상 = 🟢 / 부족 = 🔴
-
 🎯 핵심 시나리오
-(현재 가장 가능성 높은 1개만)
+(가장 가능성 높은 1개만)
 
 🟢 롱 조건
-(진입 "확정 조건"만 작성 - 애매한 조건 금지)
+(확정 조건만)
 
 🔴 숏 조건
-(진입 "확정 조건"만 작성)
+(확정 조건만)
 
 🛑 무효화
-(현재 시나리오가 깨지는 명확한 가격 조건)
+(명확한 가격 조건)
 
-======================
-
-아이콘 규칙:
-🟢 상승/유리
-🟡 중립/대기
-🔴 하락/불리
-
-======================
-
-출력 규칙:
-- 무조건 한 줄씩
-- 절대 장문 금지
+조건:
+- 확률 합 100%
 - 표 금지
-- 설명 금지
-- 판단은 단정적으로
+- 한 줄씩 짧게
+- 설명 길게 쓰지 말 것
 """
+
+
+def analyze_fact(symbol, price, indicators):
+    prompt = build_fact_analysis_prompt(symbol, price, indicators)
+    return call_claude(prompt)
+
+
+def analyze_info(text):
+    prompt = f"""
+다음 텍스트를 트레이딩 관점에서 분석하라.
+
+출력 형식:
+코인:
+상황:
+판단: 상승우세 / 하락우세 / 중립관망
+대응:
+핵심근거:
+주의사항:
+
+텍스트:
+{text}
+"""
+    return call_claude(prompt)
+
+
+def analyze_gaedwaeji(text):
+    prompt = f"""
+다음 시나리오를 구조적으로 정리하라.
+
+출력 형식:
+코인:
+시간봉:
+기준일:
+1안:
+2안:
+3안:
+핵심방향:
+전고A:
+주의:
+
+텍스트:
+{text}
+"""
+    return call_claude(prompt)
+
+
+def analyze_candle_view(text):
+    text_clean = text.replace(" ", "")
+
+    if "상승하는것이중요하지않습니다" in text_clean:
+        return "관점: 상승 자체보다 구조가 중요 → 추세 확정 아님"
+
+    if "추세파동" in text_clean:
+        return "관점: 아직 추세파동 확정 아님 → 조정 구간"
+
+    if "임펄스" in text_clean and "조정파" in text_clean:
+        return "관점: 다음 돌파가 임펄스인지 조정파인지 확인 필요"
+
+    if "임펄스" in text_clean:
+        return "관점: 강한 추세 시작 가능성 확인 필요"
+
+    if "조정파" in text_clean:
+        return "관점: 현재 반등은 조정 가능성 → 추격 주의"
+
+    return "관점: 방향성 불확실 → 추가 조건 확인 필요"
