@@ -1,43 +1,34 @@
 # entry_timing.py
-# PRE-ENTRY 정확도 강화 + PRE → REAL ENTRY 전환 로직
-# 기존 기능 유지 목적:
-# 1. 진입 레이더
-# 2. PRE-ENTRY
-# 3. PULLBACK ENTRY
-# 4. REAL ENTRY
-# 5. 롱/숏 양방향 점수 판단
-# 6. 박스권 WAIT 처리
-# 7. 점수 차이 미달 시 진입 금지
-# 8. 같은 방향 알림 제한은 main.py에서 처리
+# 통합 신뢰도 체계 적용 버전
+# 역할:
+# - 진입레이더: 이 종목 봐라
+# - PRE-ENTRY: 준비해라, 아직 쏘지 마라
+# - PULLBACK ENTRY: 눌림/되돌림 후보를 봐라
+# - REAL ENTRY: 조건은 충족됐다, 최종 확인 후 실행 판단
 
 from datetime import datetime, timezone, timedelta
-import math
 
 KST = timezone(timedelta(hours=9))
 
-# =========================
-# 설정값
-# =========================
+RADAR_MIN_SCORE = 60
+PRE_MIN_SCORE = 75
+PULLBACK_MIN_SCORE = 90
+REAL_MIN_SCORE = 90
 
-MIN_PRE_SCORE = 75
-MIN_SCORE_GAP = 20
+MIN_SCORE_GAP = 15
+PRE_SCORE_GAP = 20
 
-PRE_LEVEL_DISTANCE = 0.0015      # 0.15%
-PRE_VOLUME_RATIO = 0.8           # 최근 20봉 평균의 0.8배 이상
-
-REAL_VOLUME_RATIO = 1.2          # 최근 20봉 평균의 1.2배 이상
-PULLBACK_DISTANCE = 0.0025       # 0.25%
+PRE_LEVEL_DISTANCE = 0.0015
+PRE_VOLUME_RATIO = 0.8
+REAL_VOLUME_RATIO = 1.2
+PULLBACK_DISTANCE = 0.0025
 
 RSI_LONG_MIN = 50
 RSI_SHORT_MAX = 50
 
 PRE_SIGNAL_MEMORY = {}
-PRE_SIGNAL_EXPIRE_SEC = 60 * 60  # 1시간
+PRE_SIGNAL_EXPIRE_SEC = 60 * 60
 
-
-# =========================
-# 기본 유틸
-# =========================
 
 def now_kst():
     return datetime.now(KST)
@@ -56,73 +47,49 @@ def safe_float(value, default=0.0):
         return default
 
 
+def avg(values):
+    values = [safe_float(v) for v in values if v is not None]
+    return sum(values) / len(values) if values else 0
+
+
 def pct_distance(a, b):
     a = safe_float(a)
     b = safe_float(b)
-
     if b == 0:
         return 999
-
     return abs(a - b) / b
 
 
 def get_latest(candles):
-    if not candles:
-        return None
-    return candles[-1]
+    return candles[-1] if candles else None
 
 
 def get_closed_15m_candle(candles):
     if not candles:
         return None
-
-    if len(candles) >= 2:
-        return candles[-2]
-
-    return candles[-1]
+    return candles[-2] if len(candles) >= 2 else candles[-1]
 
 
 def get_close(candle):
-    if candle is None:
-        return None
-    return safe_float(candle.get("close"))
+    return safe_float(candle.get("close")) if candle else 0
 
 
 def get_high(candle):
-    if candle is None:
-        return None
-    return safe_float(candle.get("high"))
+    return safe_float(candle.get("high")) if candle else 0
 
 
 def get_low(candle):
-    if candle is None:
-        return None
-    return safe_float(candle.get("low"))
+    return safe_float(candle.get("low")) if candle else 0
 
 
 def get_volume(candle):
-    if candle is None:
-        return None
-    return safe_float(candle.get("volume"))
+    return safe_float(candle.get("volume")) if candle else 0
 
-
-def avg(values):
-    values = [safe_float(v) for v in values if v is not None]
-    if not values:
-        return 0
-    return sum(values) / len(values)
-
-
-# =========================
-# 지표 계산
-# =========================
 
 def ema(values, period):
     values = [safe_float(v) for v in values]
-
     if not values:
         return 0
-
     if len(values) < period:
         return avg(values)
 
@@ -146,7 +113,6 @@ def rsi(values, period=14):
 
     for i in range(1, len(values)):
         diff = values[i] - values[i - 1]
-
         if diff >= 0:
             gains.append(diff)
             losses.append(0)
@@ -169,8 +135,8 @@ def cci(candles, period=20):
         return 0
 
     target = candles[-period:]
-
     typical_prices = []
+
     for c in target:
         tp = (get_high(c) + get_low(c) + get_close(c)) / 3
         typical_prices.append(tp)
@@ -181,8 +147,7 @@ def cci(candles, period=20):
     if mean_dev == 0:
         return 0
 
-    latest_tp = typical_prices[-1]
-    return (latest_tp - ma) / (0.015 * mean_dev)
+    return (typical_prices[-1] - ma) / (0.015 * mean_dev)
 
 
 def macd_state(values):
@@ -195,9 +160,7 @@ def macd_state(values):
     ema26 = ema(values, 26)
     macd_value = ema12 - ema26
 
-    recent = values[-9:]
     recent_macd = []
-
     for i in range(len(values) - 9, len(values)):
         sub = values[:i + 1]
         recent_macd.append(ema(sub, 12) - ema(sub, 26))
@@ -206,22 +169,15 @@ def macd_state(values):
 
     if macd_value > signal and macd_value > 0:
         return "BULLISH"
-
     if macd_value < signal and macd_value < 0:
         return "BEARISH"
-
     if macd_value > 0:
         return "POSITIVE"
-
     if macd_value < 0:
         return "NEGATIVE"
 
     return "NEUTRAL"
 
-
-# =========================
-# 구조 판단
-# =========================
 
 def detect_trend(candles):
     if len(candles) < 50:
@@ -253,13 +209,10 @@ def detect_range(candles):
         return False, None, None, None
 
     recent = candles[-40:]
-    highs = [get_high(c) for c in recent]
-    lows = [get_low(c) for c in recent]
-    closes = [get_close(c) for c in recent]
 
-    range_high = max(highs)
-    range_low = min(lows)
-    current = closes[-1]
+    range_high = max([get_high(c) for c in recent])
+    range_low = min([get_low(c) for c in recent])
+    current = get_close(recent[-1])
 
     width = (range_high - range_low) / current if current else 999
 
@@ -281,21 +234,52 @@ def detect_range(candles):
 
 def find_key_levels(candles):
     if len(candles) < 50:
-        latest = get_latest(candles)
-        price = get_close(latest)
+        price = get_close(get_latest(candles))
         return price, price
 
     recent = candles[-50:]
-
     support = min([get_low(c) for c in recent[-20:]])
     resistance = max([get_high(c) for c in recent[-20:]])
 
     return support, resistance
 
 
-# =========================
-# 점수 계산
-# =========================
+def get_role_text(alert_type):
+    role_map = {
+        "ENTRY_RADAR": "📡 진입레이더 → 이 종목 봐라",
+        "PRE_ENTRY": "🟡 PRE-ENTRY → 준비해라, 아직 쏘지 마라",
+        "PULLBACK_ENTRY": "🟠 PULLBACK ENTRY → 눌림/되돌림 후보를 봐라",
+        "REAL_ENTRY": "🔥 REAL ENTRY → 조건은 충족됐다, 최종 확인 후 실행 판단",
+        "WAIT": "⏸ WAIT → 아직 매매하지 마라",
+    }
+    return role_map.get(alert_type, "")
+
+
+def get_signal_stage(confidence_score, has_trigger=False):
+    if has_trigger and confidence_score >= REAL_MIN_SCORE:
+        return "REAL_ENTRY"
+
+    if confidence_score >= PULLBACK_MIN_SCORE:
+        return "PULLBACK_ENTRY"
+
+    if confidence_score >= PRE_MIN_SCORE:
+        return "PRE_ENTRY"
+
+    if confidence_score >= RADAR_MIN_SCORE:
+        return "ENTRY_RADAR"
+
+    return "WAIT"
+
+
+def get_stage_label(confidence_score):
+    if confidence_score >= 90:
+        return "90% 이상: 실전타점 후보 구간"
+    if confidence_score >= 75:
+        return "75% 이상: PRE-ENTRY 준비 구간"
+    if confidence_score >= 60:
+        return "60% 이상: 진입레이더 감시 구간"
+    return "60% 미만: 노이즈 구간"
+
 
 def build_signal(symbol, candles_by_tf):
     candles_15m = candles_by_tf.get("15m", [])
@@ -329,12 +313,10 @@ def build_signal(symbol, candles_by_tf):
     trend_1d = detect_trend(candles_1d)
 
     is_range, range_position, range_high, range_low = detect_range(candles_15m)
-
     support, resistance = find_key_levels(candles_15m)
 
     long_score = 0
     short_score = 0
-
     reasons_long = []
     reasons_short = []
 
@@ -350,7 +332,7 @@ def build_signal(symbol, candles_by_tf):
         reasons_long.append("EMA20/50 상승 정렬")
     elif ema20 < ema50:
         short_score += 10
-        reasons_short.append("EMA20/50 하단")
+        reasons_short.append("EMA20/50 하락 정렬")
 
     if current_price > ema200:
         long_score += 8
@@ -368,10 +350,10 @@ def build_signal(symbol, candles_by_tf):
 
     if current_cci >= 100:
         long_score += 8
-        reasons_long.append(f"CCI {current_cci:.2f} 양수 강세")
+        reasons_long.append(f"CCI {current_cci:.2f} 강세")
     elif current_cci <= -50:
         short_score += 8
-        reasons_short.append(f"CCI {current_cci:.2f} 음수")
+        reasons_short.append(f"CCI {current_cci:.2f} 약세")
 
     if current_macd in ["BULLISH", "POSITIVE"]:
         long_score += 10
@@ -382,17 +364,17 @@ def build_signal(symbol, candles_by_tf):
 
     if trend_15m == "UP":
         long_score += 12
-        reasons_long.append("단기 상승 구조")
+        reasons_long.append("15M 상승 구조")
     elif trend_15m == "DOWN":
         short_score += 12
-        reasons_short.append("단기 하락 구조")
+        reasons_short.append("15M 하락 구조")
 
     if trend_1h == "UP":
         long_score += 12
         reasons_long.append("1H 상승 구조")
     elif trend_1h == "DOWN":
         short_score += 12
-        reasons_short.append("단기/1H 하락 구조")
+        reasons_short.append("1H 하락 구조")
 
     if trend_4h == "UP":
         long_score += 8
@@ -422,13 +404,21 @@ def build_signal(symbol, candles_by_tf):
 
     if long_score > short_score:
         direction = "LONG"
+        confidence_score = long_score
+        opposite_score = short_score
         key_level = resistance
     elif short_score > long_score:
         direction = "SHORT"
+        confidence_score = short_score
+        opposite_score = long_score
         key_level = support
     else:
         direction = "WAIT"
+        confidence_score = 0
+        opposite_score = 0
         key_level = None
+
+    score_gap = abs(long_score - short_score)
 
     return {
         "symbol": symbol,
@@ -437,7 +427,10 @@ def build_signal(symbol, candles_by_tf):
         "direction": direction,
         "long_score": long_score,
         "short_score": short_score,
-        "score_gap": abs(long_score - short_score),
+        "confidence_score": confidence_score,
+        "opposite_score": opposite_score,
+        "score_gap": score_gap,
+        "stage_label": get_stage_label(confidence_score),
         "ema20": ema20,
         "ema50": ema50,
         "ema200": ema200,
@@ -464,14 +457,11 @@ def build_signal(symbol, candles_by_tf):
     }
 
 
-# =========================
-# PRE-ENTRY 필터
-# =========================
-
 def is_valid_pre_entry(signal):
     direction = signal.get("direction")
-    long_score = signal.get("long_score", 0)
-    short_score = signal.get("short_score", 0)
+    confidence_score = signal.get("confidence_score", 0)
+    score_gap = signal.get("score_gap", 0)
+
     current_price = signal.get("current_price")
     key_level = signal.get("key_level")
     volume = signal.get("volume")
@@ -484,22 +474,18 @@ def is_valid_pre_entry(signal):
     if direction == "WAIT":
         return False, "방향 미확정"
 
-    if signal.get("score_gap", 0) < MIN_SCORE_GAP:
+    if confidence_score < PRE_MIN_SCORE:
+        return False, "신뢰도 75% 미만"
+
+    if score_gap < PRE_SCORE_GAP:
         return False, "롱/숏 점수 차이 20% 미만"
 
     if direction == "SHORT":
-        if short_score < MIN_PRE_SCORE:
-            return False, "SHORT 점수 75% 미만"
-
-        if short_score - long_score < MIN_SCORE_GAP:
-            return False, "SHORT 우위 점수 부족"
-
         if not (trend_15m == "DOWN" and (trend_1h == "DOWN" or signal.get("below_ema20"))):
             return False, "하락 추세 정렬 부족"
 
         if key_level and current_price:
-            distance = pct_distance(current_price, key_level)
-            if distance > PRE_LEVEL_DISTANCE:
+            if pct_distance(current_price, key_level) > PRE_LEVEL_DISTANCE:
                 return False, "핵심 지지선과 거리 0.15% 초과"
 
         if avg_volume_20 and volume < avg_volume_20 * PRE_VOLUME_RATIO:
@@ -509,18 +495,11 @@ def is_valid_pre_entry(signal):
             return False, "박스권 숏 예외 조건 아님"
 
     if direction == "LONG":
-        if long_score < MIN_PRE_SCORE:
-            return False, "LONG 점수 75% 미만"
-
-        if long_score - short_score < MIN_SCORE_GAP:
-            return False, "LONG 우위 점수 부족"
-
         if not (trend_15m == "UP" and (trend_1h == "UP" or signal.get("above_ema20"))):
             return False, "상승 추세 정렬 부족"
 
         if key_level and current_price:
-            distance = pct_distance(current_price, key_level)
-            if distance > PRE_LEVEL_DISTANCE:
+            if pct_distance(current_price, key_level) > PRE_LEVEL_DISTANCE:
                 return False, "핵심 저항선과 거리 0.15% 초과"
 
         if avg_volume_20 and volume < avg_volume_20 * PRE_VOLUME_RATIO:
@@ -531,10 +510,6 @@ def is_valid_pre_entry(signal):
 
     return True, "PRE-ENTRY 유효"
 
-
-# =========================
-# PRE → REAL 전환
-# =========================
 
 def remember_pre_signal(signal):
     symbol = signal.get("symbol")
@@ -572,73 +547,62 @@ def is_real_entry_from_pre(pre_signal, current_signal):
     if current_signal.get("direction") != direction:
         return False, "PRE 방향과 현재 방향 불일치"
 
+    if current_signal.get("confidence_score", 0) < REAL_MIN_SCORE:
+        return False, "REAL 신뢰도 90% 미만"
+
     close_15m = current_signal.get("close_15m")
     key_level = pre_signal.get("key_level")
     volume = current_signal.get("volume")
     avg_volume_20 = current_signal.get("avg_volume_20")
     rsi_value = current_signal.get("rsi")
     macd = current_signal.get("macd_state")
-    long_score = current_signal.get("long_score", 0)
-    short_score = current_signal.get("short_score", 0)
+    score_gap = current_signal.get("score_gap", 0)
 
     if not key_level:
         return False, "핵심 가격 없음"
 
+    if score_gap < PRE_SCORE_GAP:
+        return False, "점수 우위 유지 실패"
+
     if direction == "SHORT":
         if close_15m >= key_level:
             return False, "15분봉 종가 지지선 이탈 미확정"
-
         if avg_volume_20 and volume < avg_volume_20 * REAL_VOLUME_RATIO:
             return False, "REAL 거래량 부족"
-
         if rsi_value >= RSI_SHORT_MAX:
             return False, "RSI 50 아래 미충족"
-
         if macd not in ["BEARISH", "NEGATIVE"]:
             return False, "MACD 하방 미충족"
-
-        if short_score - long_score < MIN_SCORE_GAP:
-            return False, "숏 우위 점수 유지 실패"
 
     if direction == "LONG":
         if close_15m <= key_level:
             return False, "15분봉 종가 저항선 돌파 미확정"
-
         if avg_volume_20 and volume < avg_volume_20 * REAL_VOLUME_RATIO:
             return False, "REAL 거래량 부족"
-
         if rsi_value <= RSI_LONG_MIN:
             return False, "RSI 50 위 미충족"
-
         if macd not in ["BULLISH", "POSITIVE"]:
             return False, "MACD 상방 미충족"
-
-        if long_score - short_score < MIN_SCORE_GAP:
-            return False, "롱 우위 점수 유지 실패"
 
     return True, "REAL ENTRY 확정"
 
 
-# =========================
-# PULLBACK ENTRY
-# =========================
-
 def is_pullback_entry(signal):
     direction = signal.get("direction")
+    confidence_score = signal.get("confidence_score", 0)
     current_price = signal.get("current_price")
     ema20 = signal.get("ema20")
     trend_15m = signal.get("trend_15m")
     trend_1h = signal.get("trend_1h")
-    long_score = signal.get("long_score", 0)
-    short_score = signal.get("short_score", 0)
+    score_gap = signal.get("score_gap", 0)
+
+    if confidence_score < PULLBACK_MIN_SCORE:
+        return False, "PULLBACK 신뢰도 90% 미만"
+
+    if score_gap < PRE_SCORE_GAP:
+        return False, "점수 차이 부족"
 
     if direction == "LONG":
-        if long_score < MIN_PRE_SCORE:
-            return False, "LONG 점수 부족"
-
-        if long_score - short_score < MIN_SCORE_GAP:
-            return False, "LONG 점수 차이 부족"
-
         if not (trend_15m == "UP" and trend_1h in ["UP", "SIDEWAYS"]):
             return False, "상승 눌림 구조 아님"
 
@@ -646,12 +610,6 @@ def is_pullback_entry(signal):
             return True, "상승 추세 EMA20 눌림"
 
     if direction == "SHORT":
-        if short_score < MIN_PRE_SCORE:
-            return False, "SHORT 점수 부족"
-
-        if short_score - long_score < MIN_SCORE_GAP:
-            return False, "SHORT 점수 차이 부족"
-
         if not (trend_15m == "DOWN" and trend_1h in ["DOWN", "SIDEWAYS"]):
             return False, "하락 되돌림 구조 아님"
 
@@ -661,34 +619,37 @@ def is_pullback_entry(signal):
     return False, "PULLBACK 조건 미충족"
 
 
-# =========================
-# 메시지 생성
-# =========================
+def make_radar_message(signal, reason):
+    return f"""📡 {signal.get('symbol')} 진입레이더
+→ 이 종목 봐라
 
-def format_check(ok, text):
-    return f"✅ {text}" if ok else f"❌ {text}"
+신뢰도: {signal.get('confidence_score')}%
+구간: {signal.get('stage_label')}
+
+상태: {signal.get('direction')}
+현재가: {signal.get('current_price'):.2f}
+
+LONG 점수: {signal.get('long_score')}%
+SHORT 점수: {signal.get('short_score')}%
+점수차이: {signal.get('score_gap')}%
+
+15M 추세: {signal.get('trend_15m')}
+1H 추세: {signal.get('trend_1h')}
+RSI: {signal.get('rsi'):.2f}
+CCI: {signal.get('cci'):.2f}
+MACD: {signal.get('macd_state')}
+
+판단:
+{reason}
+
+※ 진입 알림 아님. 감시 시작 알림.
+"""
 
 
 def make_pre_entry_message(signal, reason):
     direction = signal.get("direction")
     current_price = signal.get("current_price")
-    long_score = signal.get("long_score", 0)
-    short_score = signal.get("short_score", 0)
     key_level = signal.get("key_level")
-    volume = signal.get("volume")
-    avg_volume_20 = signal.get("avg_volume_20")
-    rsi_value = signal.get("rsi")
-    cci_value = signal.get("cci")
-    trend_15m = signal.get("trend_15m")
-    trend_1h = signal.get("trend_1h")
-    is_range = signal.get("is_range")
-    range_position = signal.get("range_position")
-
-    score = short_score if direction == "SHORT" else long_score
-    opposite = long_score if direction == "SHORT" else short_score
-
-    volume_ratio = volume / avg_volume_20 if avg_volume_20 else 0
-    level_distance = pct_distance(current_price, key_level) * 100 if key_level else 0
 
     if direction == "SHORT":
         trigger_text = f"15분봉 종가 {key_level:.2f} 이탈"
@@ -701,24 +662,28 @@ def make_pre_entry_message(signal, reason):
         tp1 = current_price * 1.005
         tp2 = current_price * 1.010
 
-    msg = f"""🚨 {signal.get('symbol')} 실전 타점
+    volume_ratio = signal.get("volume") / signal.get("avg_volume_20") if signal.get("avg_volume_20") else 0
+    level_distance = pct_distance(current_price, key_level) * 100 if key_level else 0
+
+    return f"""🚨 {signal.get('symbol')} 실전타점
 
 🟡 PRE-ENTRY
+→ 준비해라, 아직 쏘지 마라
+
+신뢰도: {signal.get('confidence_score')}%
+구간: {signal.get('stage_label')}
 
 방향: {direction}
-주도점수: {score}%
-반대점수: {opposite}%
-점수차이: {abs(score - opposite)}%
 현재가: {current_price:.2f}
 
-{format_check(score >= MIN_PRE_SCORE, f'{direction} 점수 75% 이상')}
-{format_check(abs(score - opposite) >= MIN_SCORE_GAP, '롱/숏 점수 차이 20% 이상')}
-{format_check(volume_ratio >= PRE_VOLUME_RATIO, f'거래량 {volume_ratio:.2f}배')}
-{format_check(level_distance <= PRE_LEVEL_DISTANCE * 100, f'핵심 가격 근접 {level_distance:.2f}%')}
-{format_check(trend_15m in ['UP', 'DOWN'], f'15분 추세 {trend_15m}')}
-{format_check(trend_1h in ['UP', 'DOWN', 'SIDEWAYS'], f'1시간 추세 {trend_1h}')}
-{format_check(True, f'RSI {rsi_value:.2f}')}
-{format_check(True, f'CCI {cci_value:.2f}')}
+LONG 점수: {signal.get('long_score')}%
+SHORT 점수: {signal.get('short_score')}%
+점수차이: {signal.get('score_gap')}%
+
+✅ 신뢰도 75% 이상
+✅ 점수차이 20% 이상
+✅ 핵심 가격 근접 {level_distance:.2f}%
+✅ 거래량 {volume_ratio:.2f}배
 
 📌 핵심 트리거:
 {trigger_text}
@@ -732,21 +697,61 @@ def make_pre_entry_message(signal, reason):
 🎯 2차 익절:
 {tp2:.2f}
 
-⚠️ 조건은 좋지만 아직 REAL ENTRY 아님
+⚠️ 아직 REAL ENTRY 아님
 ⚠️ 가격 트리거 + 거래량 + 15분봉 종가 확정 전까지 대기
 
-※ 자동진입 아님. 확인용 알림.
+※ 자동진입 아님. 준비 알림.
 """
-    return msg
+
+
+def make_pullback_message(signal, reason):
+    direction = signal.get("direction")
+    current_price = signal.get("current_price")
+    ema20 = signal.get("ema20")
+
+    if direction == "SHORT":
+        stop = current_price * 1.004
+        tp1 = current_price * 0.996
+        tp2 = current_price * 0.992
+    else:
+        stop = current_price * 0.996
+        tp1 = current_price * 1.004
+        tp2 = current_price * 1.008
+
+    return f"""🟠 {signal.get('symbol')} PULLBACK ENTRY
+→ 눌림/되돌림 후보를 봐라
+
+신뢰도: {signal.get('confidence_score')}%
+구간: {signal.get('stage_label')}
+
+방향: {direction}
+현재가: {current_price:.2f}
+EMA20: {ema20:.2f}
+
+✅ {reason}
+
+📌 의미:
+추세 진행 중 눌림 또는 되돌림 후보
+
+🛑 손절:
+{stop:.2f}
+
+🎯 1차 익절:
+{tp1:.2f}
+
+🎯 2차 익절:
+{tp2:.2f}
+
+⚠️ 자동진입 아님. 눌림 후보 확인 알림.
+"""
 
 
 def make_real_entry_message(signal, reason, pre_signal):
     direction = signal.get("direction")
     current_price = signal.get("current_price")
     key_level = pre_signal.get("key_level")
-    volume = signal.get("volume")
-    avg_volume_20 = signal.get("avg_volume_20")
-    volume_ratio = volume / avg_volume_20 if avg_volume_20 else 0
+
+    volume_ratio = signal.get("volume") / signal.get("avg_volume_20") if signal.get("avg_volume_20") else 0
 
     if direction == "SHORT":
         stop = pre_signal.get("resistance") or current_price * 1.005
@@ -759,7 +764,11 @@ def make_real_entry_message(signal, reason, pre_signal):
         tp2 = current_price * 1.010
         trigger = f"저항선 {key_level:.2f} 돌파 확정"
 
-    msg = f"""🔥 {signal.get('symbol')} REAL ENTRY
+    return f"""🔥 {signal.get('symbol')} REAL ENTRY
+→ 조건은 충족됐다, 최종 확인 후 실행 판단
+
+신뢰도: {signal.get('confidence_score')}%
+구간: 90% 이상 + 가격 트리거 발생
 
 방향: {direction}
 현재가: {current_price:.2f}
@@ -786,52 +795,17 @@ REAL ENTRY 조건 충족
 
 ⚠️ 자동진입 아님. 최종 체결은 직접 확인.
 """
-    return msg
-
-
-def make_pullback_message(signal, reason):
-    direction = signal.get("direction")
-    current_price = signal.get("current_price")
-    ema20 = signal.get("ema20")
-
-    if direction == "SHORT":
-        stop = current_price * 1.004
-        tp1 = current_price * 0.996
-        tp2 = current_price * 0.992
-    else:
-        stop = current_price * 0.996
-        tp1 = current_price * 1.004
-        tp2 = current_price * 1.008
-
-    msg = f"""🟠 {signal.get('symbol')} PULLBACK ENTRY
-
-방향: {direction}
-현재가: {current_price:.2f}
-EMA20: {ema20:.2f}
-
-✅ {reason}
-
-📌 의미:
-추세 진행 중 눌림 또는 되돌림 구간
-
-🛑 손절:
-{stop:.2f}
-
-🎯 1차 익절:
-{tp1:.2f}
-
-🎯 2차 익절:
-{tp2:.2f}
-
-⚠️ 자동진입 아님. 확인용 알림.
-"""
-    return msg
 
 
 def make_wait_message(signal, reason):
-    msg = f"""⏸ {signal.get('symbol')} WAIT
+    return f"""⏸ {signal.get('symbol')} WAIT
+→ 아직 매매하지 마라
+
+신뢰도: {signal.get('confidence_score')}%
+구간: {signal.get('stage_label')}
 
 현재가: {signal.get('current_price'):.2f}
+
 LONG 점수: {signal.get('long_score')}%
 SHORT 점수: {signal.get('short_score')}%
 점수차이: {signal.get('score_gap')}%
@@ -840,30 +814,25 @@ SHORT 점수: {signal.get('short_score')}%
 {reason}
 
 📌 판단:
-방향 우위가 부족하거나 박스권 노이즈 가능성이 있어 진입 금지
+방향 우위가 부족하거나 조건 완성 전이다.
 
-※ 자동진입 아님. 확인용 알림.
+※ 자동진입 아님. 대기 알림.
 """
-    return msg
 
-
-# =========================
-# 외부 호출 함수
-# =========================
 
 def analyze_entry_timing(symbol, candles_by_tf, structure_result=None):
     signal = build_signal(symbol, candles_by_tf)
-    results = []
 
     direction = signal.get("direction")
+    confidence_score = signal.get("confidence_score", 0)
     score_gap = signal.get("score_gap", 0)
 
-    if direction == "WAIT" or score_gap < MIN_SCORE_GAP:
+    if direction == "WAIT" or confidence_score < RADAR_MIN_SCORE or score_gap < MIN_SCORE_GAP:
         return {
             "type": "WAIT",
             "alert_type": "WAIT",
             "direction": "WAIT",
-            "message": make_wait_message(signal, "롱/숏 점수 차이 부족 또는 방향 미확정"),
+            "message": make_wait_message(signal, "신뢰도 60% 미만 또는 점수차이 15% 미만"),
             **signal,
         }
 
@@ -871,20 +840,19 @@ def analyze_entry_timing(symbol, candles_by_tf, structure_result=None):
     real_ok, real_reason = is_real_entry_from_pre(active_pre, signal)
 
     if real_ok:
-        results.append({
+        PRE_SIGNAL_MEMORY.pop(symbol, None)
+        return [{
             "type": "REAL_ENTRY",
             "alert_type": "REAL_ENTRY",
             "direction": direction,
             "message": make_real_entry_message(signal, real_reason, active_pre),
             "reason": real_reason,
             **signal,
-        })
+        }]
 
-        PRE_SIGNAL_MEMORY.pop(symbol, None)
-        return results
+    results = []
 
     pullback_ok, pullback_reason = is_pullback_entry(signal)
-
     if pullback_ok:
         results.append({
             "type": "PULLBACK_ENTRY",
@@ -896,10 +864,8 @@ def analyze_entry_timing(symbol, candles_by_tf, structure_result=None):
         })
 
     pre_ok, pre_reason = is_valid_pre_entry(signal)
-
     if pre_ok:
         remember_pre_signal(signal)
-
         results.append({
             "type": "PRE_ENTRY",
             "alert_type": "PRE_ENTRY",
@@ -909,17 +875,46 @@ def analyze_entry_timing(symbol, candles_by_tf, structure_result=None):
             **signal,
         })
 
-    if not results:
-        return {
-            "type": "WAIT",
-            "alert_type": "WAIT",
-            "direction": "WAIT",
-            "message": make_wait_message(signal, pre_reason),
-            "reason": pre_reason,
-            **signal,
-        }
+    if results:
+        return results
 
-    return results
+    return {
+        "type": "ENTRY_RADAR",
+        "alert_type": "ENTRY_RADAR",
+        "direction": direction,
+        "message": make_radar_message(signal, "방향은 감지됐지만 PRE/REAL 조건은 아직 미완성"),
+        "reason": "진입레이더 구간",
+        **signal,
+    }
+
+
+def run_entry_radar(symbol, candles_by_tf, structure_result=None):
+    signal = build_signal(symbol, candles_by_tf)
+
+    confidence_score = signal.get("confidence_score", 0)
+    score_gap = signal.get("score_gap", 0)
+
+    if confidence_score < RADAR_MIN_SCORE:
+        radar_state = "WAIT"
+        reason = "신뢰도 60% 미만"
+    elif score_gap < MIN_SCORE_GAP:
+        radar_state = "WAIT"
+        reason = "롱/숏 점수 차이 15% 미만"
+    elif signal.get("is_range") and signal.get("range_position") == "MIDDLE":
+        radar_state = "WAIT"
+        reason = "박스권 중앙"
+    else:
+        radar_state = signal.get("direction")
+        reason = "방향 후보 감지"
+
+    return {
+        "type": "ENTRY_RADAR",
+        "alert_type": "ENTRY_RADAR",
+        "direction": radar_state,
+        "message": make_radar_message(signal, reason),
+        "reason": reason,
+        **signal,
+    }
 
 
 def run_entry_timing(symbol, candles_by_tf, structure_result=None):
@@ -932,57 +927,6 @@ def check_entry(symbol, candles_by_tf, structure_result=None):
 
 def analyze(symbol, candles_by_tf, structure_result=None):
     return analyze_entry_timing(symbol, candles_by_tf, structure_result)
-
-
-# =========================
-# 진입 레이더
-# =========================
-
-def run_entry_radar(symbol, candles_by_tf, structure_result=None):
-    signal = build_signal(symbol, candles_by_tf)
-
-    direction = signal.get("direction")
-    long_score = signal.get("long_score")
-    short_score = signal.get("short_score")
-    score_gap = signal.get("score_gap")
-
-    if score_gap < 15:
-        radar_state = "WAIT"
-        reason = "롱/숏 점수 차이 15% 미만"
-    elif signal.get("is_range") and signal.get("range_position") == "MIDDLE":
-        radar_state = "WAIT"
-        reason = "박스권 중앙"
-    else:
-        radar_state = direction
-        reason = "방향 후보 감지"
-
-    msg = f"""📡 {symbol} 진입 레이더
-
-상태: {radar_state}
-현재가: {signal.get('current_price'):.2f}
-
-LONG 점수: {long_score}%
-SHORT 점수: {short_score}%
-점수차이: {score_gap}%
-
-15분 추세: {signal.get('trend_15m')}
-1시간 추세: {signal.get('trend_1h')}
-RSI: {signal.get('rsi'):.2f}
-CCI: {signal.get('cci'):.2f}
-MACD: {signal.get('macd_state')}
-
-판단:
-{reason}
-"""
-
-    return {
-        "type": "ENTRY_RADAR",
-        "alert_type": "ENTRY_RADAR",
-        "direction": radar_state,
-        "message": msg,
-        "reason": reason,
-        **signal,
-    }
 
 
 def entry_radar(symbol, candles_by_tf, structure_result=None):
