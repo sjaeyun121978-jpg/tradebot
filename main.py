@@ -31,10 +31,35 @@ GAEDWAEJI_KEYWORDS = [
 ]
 
 BOT_IGNORE_KEYWORDS = [
-    "모듈분리 봇 시작", "봇 시작", "정시 팩트기반구조분석",
-    "실전 타점 알림", "즉시 조건 알림", "조건 감시 오류",
-    "급등주 AI 분석 시작", "진입 레이더"
+    "모듈분리 봇 시작",
+    "봇 시작",
+    "AUTO_TRADE",
+    "정시 팩트기반구조분석",
+    "실전 타점 알림",
+    "실전 타점",
+    "즉시 조건 알림",
+    "조건 감시 오류",
+    "급등주 AI 분석 시작",
+    "진입 레이더",
+    "📊 정보 분석",
+    "📊 BTC 정시",
+    "📊 ETH 정시",
+    "📊 BTC 종합상황판",
+    "📊 ETH 종합상황판",
+    "트레이딩 분석 요약",
+    "코인:",
+    "상황:",
+    "판단:",
+    "대응:",
+    "근거:",
+    "핵심:",
+    "최종 판단",
+    "현재 행동",
+    "방향 점수",
+    "진입 금지",
+    "관망",
 ]
+
 
 last_signal = {"ETH": None, "BTC": None}
 last_debug_time = {"ETH": 0, "BTC": 0}
@@ -129,7 +154,6 @@ async def condition_monitor_loop():
                 if not price or not indicators:
                     continue
 
-                # ✅ 진입 신호
                 timing = judge_entry_timing(symbol, price, indicators)
 
                 if timing:
@@ -144,17 +168,16 @@ async def condition_monitor_loop():
 
                 last_signal[symbol] = None
 
-                # 🛰️ 레이더 (조건 진행률)
                 debug = get_entry_debug_status(symbol, price, indicators)
 
                 if debug:
-                    now = time.time()
+                    current_time = time.time()
                     score = debug["score"]
 
                     if (
                         score >= 60
                         and (
-                            now - last_debug_time[symbol] >= 300
+                            current_time - last_debug_time[symbol] >= 300
                             or score >= last_debug_score[symbol] + 10
                         )
                     ):
@@ -163,10 +186,11 @@ async def condition_monitor_loop():
                             f"방향: {debug['signal']}\n"
                             f"조건충족: {score}%\n"
                             f"가격: {price}\n\n"
-                            f"{debug['detail']}"
+                            f"{debug['detail']}\n\n"
+                            f"※ 진입 신호 아님. 조건 진행률 알림."
                         )
 
-                        last_debug_time[symbol] = now
+                        last_debug_time[symbol] = current_time
                         last_debug_score[symbol] = score
 
         except Exception as e:
@@ -176,19 +200,46 @@ async def condition_monitor_loop():
 
 
 async def analyze_geupdeungju(symbol, chat_title, text):
+    now = now_str()
+
     send_telegram_message(f"⚡ {symbol} 급등주 분석 시작")
 
     price, indicators = await build_indicators_with_structure(symbol)
 
     if not price or not indicators:
-        send_telegram_message("❌ 데이터 부족")
+        send_telegram_message(f"❌ {symbol} 데이터 부족")
         return
 
     result = await run_blocking(analyze_fact, symbol, price, indicators)
 
     send_telegram_message(
-        f"📊 {symbol} 분석\n\n현재가: {price}\n\n{result}"
+        f"📊 {symbol} 급등주 분석\n"
+        f"채널: {chat_title}\n"
+        f"현재가: {price}\n\n"
+        f"{result}"
     )
+
+    await run_blocking(
+        save_to_sheets,
+        "급등주",
+        [now, chat_title, symbol, price, text[:200], result]
+    )
+
+    trade_type, entry_price = await run_blocking(classify_trade, symbol)
+
+    if trade_type == "SKIP":
+        send_telegram_message(f"{symbol} → 자동매매 진입 안함")
+        return
+
+    send_telegram_message(f"{symbol} → {trade_type}")
+
+    if ENABLE_AUTO_TRADE:
+        await run_blocking(execute_trade, symbol, trade_type, entry_price)
+        await run_blocking(
+            save_to_sheets,
+            "자동매매",
+            [now, symbol, trade_type, entry_price]
+        )
 
 
 async def main():
@@ -201,12 +252,30 @@ async def main():
     await client.start()
 
     send_telegram_message(
-        f"🚀 봇 시작\nAUTO_TRADE={ENABLE_AUTO_TRADE}"
+        f"🚀 봇 시작\n"
+        f"ENABLE_AUTO_TRADE={ENABLE_AUTO_TRADE}\n"
+        f"정시 분석 + 타점 감시 + 진입 레이더 + 채널 분석 활성화"
     )
 
     asyncio.create_task(hourly_fact_analysis_loop("ETH"))
     asyncio.create_task(hourly_fact_analysis_loop("BTC"))
     asyncio.create_task(condition_monitor_loop())
+
+    @client.on(events.NewMessage(pattern=r"^/복기$"))
+    async def bokgi_handler(event):
+        rows = await run_blocking(get_recent_records, "개돼지기준", 3)
+        if not rows:
+            await event.respond("📭 저장된 개돼지기준 없음")
+        else:
+            await event.respond("\n\n".join(" | ".join(row) for row in rows))
+
+    @client.on(events.NewMessage(pattern=r"^/매매현황$"))
+    async def trade_status_handler(event):
+        rows = await run_blocking(get_recent_records, "자동매매", 5)
+        if not rows:
+            await event.respond("📭 자동매매 내역 없음")
+        else:
+            await event.respond("\n\n".join(" | ".join(row) for row in rows))
 
     @client.on(events.NewMessage)
     async def handler(event):
@@ -216,37 +285,68 @@ async def main():
 
             text = (event.message.text or "").strip()
 
-            if not text or text.startswith("/") or is_bot_message(text):
+            if not text:
+                return
+
+            if text.startswith("/"):
+                return
+
+            if is_bot_message(text):
                 return
 
             chat_title = extract_chat_title(event)
+            now = now_str()
 
-            # 캔들의신
             if is_candle_view_message(chat_title, text):
                 result = await run_blocking(analyze_candle_view, text)
-                send_telegram_message(f"📘 캔들 해석\n\n{result}")
+                send_telegram_message(
+                    f"📘 캔들의신 관점 해석\n"
+                    f"채널: {chat_title}\n\n"
+                    f"{result}"
+                )
+                await run_blocking(
+                    save_to_sheets,
+                    "캔들의신해석",
+                    [now, chat_title, text[:200], result]
+                )
                 return
 
-            # 개돼지
             if is_gaedwaeji_message(text):
                 result = await run_blocking(analyze_gaedwaeji, text)
-                send_telegram_message(f"🐷 시나리오 분석\n\n{result}")
+                send_telegram_message(
+                    f"🐷 개돼지기법 시나리오 분석\n"
+                    f"채널: {chat_title}\n\n"
+                    f"{result}"
+                )
+                await run_blocking(
+                    save_to_sheets,
+                    "개돼지기준",
+                    [now, chat_title, text[:200], result]
+                )
                 return
 
-            # 코인 분석 (#BTC)
             symbol = extract_symbol(text)
+
             if symbol:
                 await analyze_geupdeungju(symbol, chat_title, text)
                 return
 
-            # 일반 정보
             if is_info_message(text):
                 result = await run_blocking(analyze_info, text)
-                send_telegram_message(f"📊 정보 분석\n\n{result}")
+                send_telegram_message(
+                    f"📊 정보성 메시지 분석\n"
+                    f"채널: {chat_title}\n\n"
+                    f"{result}"
+                )
+                await run_blocking(
+                    save_to_sheets,
+                    "정보분석",
+                    [now, chat_title, text[:200], result]
+                )
                 return
 
         except Exception as e:
-            send_telegram_message(f"❌ 처리 오류: {e}")
+            send_telegram_message(f"❌ 채널 메시지 처리 오류: {e}")
 
     await client.run_until_disconnected()
 
