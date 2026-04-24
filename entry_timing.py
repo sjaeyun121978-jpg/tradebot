@@ -11,54 +11,28 @@ def judge_entry_timing(symbol, price, indicators):
         return None
 
     if debug["entry_level"] == "REAL":
-        return {
-            "signal": signal,
-            "type": "REAL",
-            "message": (
-                f"🔴 REAL ENTRY\n\n"
-                f"방향: {signal}\n"
-                f"조건충족: {score}%\n"
-                f"현재가: {price}\n\n"
-                f"{debug['detail']}\n\n"
-                f"🛑 손절: {debug['stop_loss']}\n"
-                f"🎯 1차 익절: {debug['tp1']}\n"
-                f"🎯 2차 익절: {debug['tp2']}\n\n"
-                f"🔥 지금 진입 가능"
-            )
-        }
+        level_icon = "🔴 REAL ENTRY"
+    elif debug["entry_level"] == "PULLBACK":
+        level_icon = "🟢 PULLBACK ENTRY"
+    elif debug["entry_level"] == "PRE":
+        level_icon = "🟡 PRE-ENTRY"
+    else:
+        return None
 
-    if debug["entry_level"] == "PULLBACK":
-        return {
-            "signal": signal,
-            "type": "PULLBACK",
-            "message": (
-                f"🟢 PULLBACK ENTRY\n\n"
-                f"방향: {signal}\n"
-                f"조건충족: {score}%\n"
-                f"현재가: {price}\n\n"
-                f"{debug['detail']}\n\n"
-                f"🛑 손절: {debug['stop_loss']}\n"
-                f"🎯 1차 익절: {debug['tp1']}\n"
-                f"🎯 2차 익절: {debug['tp2']}\n\n"
-                f"✅ 돌파 후 눌림 확인 → 진입 가능"
-            )
-        }
-
-    if debug["entry_level"] == "PRE":
-        return {
-            "signal": signal,
-            "type": "PRE",
-            "message": (
-                f"🟡 PRE-ENTRY\n\n"
-                f"방향: {signal}\n"
-                f"조건충족: {score}%\n"
-                f"현재가: {price}\n\n"
-                f"{debug['detail']}\n\n"
-                f"⚠️ 진입 대기: 핵심 조건 미완성"
-            )
-        }
-
-    return None
+    return {
+        "signal": signal,
+        "type": debug["entry_level"],
+        "message": (
+            f"{level_icon}\n\n"
+            f"방향: {signal}\n"
+            f"조건충족: {score}%\n"
+            f"현재가: {price}\n\n"
+            f"{debug['detail']}\n\n"
+            f"🛑 손절: {debug['stop_loss']}\n"
+            f"🎯 1차 익절: {debug['tp1']}\n"
+            f"🎯 2차 익절: {debug['tp2']}"
+        )
+    }
 
 
 def get_entry_debug_status(symbol, price, indicators):
@@ -80,31 +54,23 @@ def get_entry_debug_status(symbol, price, indicators):
     if symbol == "ETH":
         long_break = 2330
         short_break = 2300
-
         long_sl = 2315
         short_sl = 2320
-
         long_tp1 = 2340
         long_tp2 = 2360
-
         short_tp1 = 2290
         short_tp2 = 2283
-
         pullback_range = 8
 
     elif symbol == "BTC":
         long_break = 79000
         short_break = 77000
-
         long_sl = 78300
         short_sl = 78500
-
         long_tp1 = 80500
         long_tp2 = 81000
-
         short_tp1 = 76000
         short_tp2 = 75500
-
         pullback_range = 350
 
     else:
@@ -116,13 +82,10 @@ def get_entry_debug_status(symbol, price, indicators):
 
     long_score = 0
     short_score = 0
-
     long_reasons = []
     short_reasons = []
 
-    # =========================
     # 거래량
-    # =========================
     if vol >= 1.2:
         long_score += 20
         short_score += 20
@@ -132,9 +95,7 @@ def get_entry_debug_status(symbol, price, indicators):
         long_reasons.append(f"❌ 거래량 {vol} 부족")
         short_reasons.append(f"❌ 거래량 {vol} 부족")
 
-    # =========================
-    # EMA 위치
-    # =========================
+    # EMA
     if price > ema20 and price > ema50:
         long_score += 20
         long_reasons.append("✅ EMA20/50 상단")
@@ -147,9 +108,7 @@ def get_entry_debug_status(symbol, price, indicators):
     else:
         short_reasons.append("❌ EMA20/50 하단 미확정")
 
-    # =========================
     # RSI
-    # =========================
     if rsi >= 55:
         long_score += 15
         long_reasons.append(f"✅ RSI {rsi} 상승 우위")
@@ -162,9 +121,7 @@ def get_entry_debug_status(symbol, price, indicators):
     else:
         short_reasons.append(f"❌ RSI {rsi} 하락 부족")
 
-    # =========================
     # CCI
-    # =========================
     if cci > 0:
         long_score += 15
         long_reasons.append(f"✅ CCI {cci} 양수")
@@ -177,24 +134,30 @@ def get_entry_debug_status(symbol, price, indicators):
     else:
         short_reasons.append(f"❌ CCI {cci} 숏 부족")
 
-    # =========================
     # 구조
-    # =========================
-    if "HH/HL" in s15 or "상승" in s15 or "HH/HL" in s1h or "상승" in s1h:
+    long_structure = (
+        "HH/HL" in s15 or "상승" in s15
+        or "HH/HL" in s1h or "상승" in s1h
+    )
+
+    short_structure = (
+        "LH/LL" in s15 or "하락" in s15
+        or "LH/LL" in s1h or "하락" in s1h
+    )
+
+    if long_structure:
         long_score += 15
         long_reasons.append("✅ 단기/1H 상승 구조")
     else:
         long_reasons.append("❌ 상승 구조 미확정")
 
-    if "LH/LL" in s15 or "하락" in s15 or "LH/LL" in s1h or "하락" in s1h:
+    if short_structure:
         short_score += 15
         short_reasons.append("✅ 단기/1H 하락 구조")
     else:
         short_reasons.append("❌ 하락 구조 미확정")
 
-    # =========================
-    # 4H 역방향 감점
-    # =========================
+    # 4H 방향 필터
     if "하락" in s4h or "LH/LL" in s4h:
         long_score -= 10
         long_reasons.append("⚠️ 4H 하락 구조 → 롱 감점")
@@ -203,12 +166,7 @@ def get_entry_debug_status(symbol, price, indicators):
         short_score -= 10
         short_reasons.append("⚠️ 4H 상승 구조 → 숏 감점")
 
-    # =========================
-    # 진짜 돌파 확인
-    # =========================
-    long_break_ok = price >= long_break
-    short_break_ok = price <= short_break
-
+    # 롱 돌파 확인
     long_breakout_confirm = (
         price >= long_break
         and vol >= 1.2
@@ -218,6 +176,7 @@ def get_entry_debug_status(symbol, price, indicators):
         and price > ema50
     )
 
+    # 숏 이탈 확인
     short_breakdown_confirm = (
         price <= short_break
         and vol >= 1.2
@@ -230,7 +189,7 @@ def get_entry_debug_status(symbol, price, indicators):
     if long_breakout_confirm:
         long_score += 15
         long_reasons.append(f"✅ 핵심 저항 {long_break} 돌파 확인")
-    elif long_break_ok:
+    elif price >= long_break:
         long_score += 8
         long_reasons.append(f"🟡 핵심 저항 {long_break} 단순 돌파")
     else:
@@ -239,15 +198,37 @@ def get_entry_debug_status(symbol, price, indicators):
     if short_breakdown_confirm:
         short_score += 15
         short_reasons.append(f"✅ 핵심 지지 {short_break} 이탈 확인")
-    elif short_break_ok:
+    elif price <= short_break:
         short_score += 8
         short_reasons.append(f"🟡 핵심 지지 {short_break} 단순 이탈")
     else:
         short_reasons.append(f"❌ 핵심 지지 {short_break} 미이탈")
 
-    # =========================
-    # 돌파 후 눌림 진입
-    # =========================
+    # 숏 전용 강화: 반등 실패
+    short_rebound_fail = (
+        price < ema20
+        and rsi < 55
+        and cci < 100
+        and ("하락" in s15 or "LH/LL" in s15 or "하락" in s1h or "LH/LL" in s1h)
+    )
+
+    if short_rebound_fail:
+        short_score += 10
+        short_reasons.append("✅ 반등 실패 숏 조건")
+
+    # 숏 전용 강화: 고점 갱신 실패 추정
+    short_lh_fail = (
+        "LH" in s15
+        or "LH" in s1h
+        or "하락 구조" in s15
+        or "하락 구조" in s1h
+    )
+
+    if short_lh_fail:
+        short_score += 10
+        short_reasons.append("✅ LH 고점 낮아짐 감지")
+
+    # 돌파 후 눌림 롱
     long_pullback_entry = (
         price > long_break
         and price <= long_break + pullback_range
@@ -256,9 +237,14 @@ def get_entry_debug_status(symbol, price, indicators):
         and rsi >= 50
         and cci > 0
         and vol >= 0.8
-        and ("상승" in s15 or "HH/HL" in s15 or "상승" in s1h or "HH/HL" in s1h)
+        and long_structure
     )
 
+    if long_pullback_entry:
+        long_score += 10
+        long_reasons.append("✅ 돌파 후 눌림 롱 구간")
+
+    # 이탈 후 되돌림 숏
     short_pullback_entry = (
         price < short_break
         and price >= short_break - pullback_range
@@ -267,39 +253,31 @@ def get_entry_debug_status(symbol, price, indicators):
         and rsi <= 50
         and cci < 0
         and vol >= 0.8
-        and ("하락" in s15 or "LH/LL" in s15 or "하락" in s1h or "LH/LL" in s1h)
+        and short_structure
     )
-
-    if long_pullback_entry:
-        long_score += 10
-        long_reasons.append("✅ 돌파 후 눌림 매수 구간")
 
     if short_pullback_entry:
         short_score += 10
         short_reasons.append("✅ 이탈 후 되돌림 숏 구간")
 
-    # =========================
     # 다이버전스
-    # =========================
     if rsi_div == "하락 다이버전스" or cci_div == "하락 다이버전스":
         long_score -= 20
-        long_reasons.append("⚠️ 하락 다이버전스 → 롱 감점")
         short_score += 10
+        long_reasons.append("⚠️ 하락 다이버전스 → 롱 감점")
         short_reasons.append("✅ 하락 다이버전스 보조")
 
     if rsi_div == "상승 다이버전스" or cci_div == "상승 다이버전스":
         short_score -= 20
-        short_reasons.append("⚠️ 상승 다이버전스 → 숏 감점")
         long_score += 10
+        short_reasons.append("⚠️ 상승 다이버전스 → 숏 감점")
         long_reasons.append("✅ 상승 다이버전스 보조")
 
     long_score = max(0, min(100, long_score))
     short_score = max(0, min(100, short_score))
 
-    # =========================
     # 최종 방향 선택
-    # =========================
-    if long_score >= short_score:
+    if long_score > short_score:
         signal = "LONG" if long_score >= 60 else "WAIT"
         score = long_score
         detail = "\n".join(long_reasons)
@@ -308,7 +286,8 @@ def get_entry_debug_status(symbol, price, indicators):
         tp2 = long_tp2
         real_ok = long_breakout_confirm
         pullback_ok = long_pullback_entry
-    else:
+
+    elif short_score > long_score:
         signal = "SHORT" if short_score >= 60 else "WAIT"
         score = short_score
         detail = "\n".join(short_reasons)
@@ -318,9 +297,18 @@ def get_entry_debug_status(symbol, price, indicators):
         real_ok = short_breakdown_confirm
         pullback_ok = short_pullback_entry
 
-    # =========================
+    else:
+        return {
+            "signal": "WAIT",
+            "score": long_score,
+            "entry_level": "RADAR",
+            "detail": "롱/숏 점수 동일 → 방향성 없음",
+            "stop_loss": "-",
+            "tp1": "-",
+            "tp2": "-",
+        }
+
     # 알림 등급
-    # =========================
     if signal == "WAIT":
         entry_level = "RADAR"
     elif score >= 95 and real_ok:
