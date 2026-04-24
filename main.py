@@ -1,91 +1,147 @@
-import asyncio
+def judge_entry_timing(symbol, price, indicators):
+    """
+    조건 트리거 이후 실제 진입 타점 판단용
+    자동진입 아님
+    텔레그램 알림 판단용
+    """
 
-from bybit_client import get_current_price, get_candles
-from indicators import calculate_indicators
-from telegram_utils import send_telegram_message
-from scheduler import hourly_fact_analysis_loop
+    if not price or not indicators:
+        return None
 
+    rsi = indicators.get("rsi")
+    vol = indicators.get("vol_ratio")
+    ema20 = indicators.get("ema20")
+    ema50 = indicators.get("ema50")
 
-SYMBOLS = ["ETH", "BTC"]
+    if rsi is None or vol is None or ema20 is None or ema50 is None:
+        return None
 
-last_signal = {
-    "ETH": None,
-    "BTC": None
-}
+    # =========================
+    # ETH 기준 주요 구간
+    # =========================
+    if symbol == "ETH":
+        support_break = 2295
+        resistance_break = 2315
+        upper_invalid = 2320
+        lower_invalid = 2290
 
+    # =========================
+    # BTC 기준 주요 구간
+    # =========================
+    elif symbol == "BTC":
+        support_break = 77000
+        resistance_break = 78500
+        upper_invalid = 78800
+        lower_invalid = 76800
 
-async def condition_monitor_loop():
-    while True:
-        try:
-            for symbol in SYMBOLS:
-                price = await asyncio.to_thread(get_current_price, symbol)
-                candles = await asyncio.to_thread(get_candles, symbol, "15", 60)
-                indicators = await asyncio.to_thread(calculate_indicators, candles)
+    else:
+        return None
 
-                if not price or not indicators:
-                    continue
+    # =========================
+    # 공통 필터
+    # =========================
+    volume_ok = vol >= 1.2
+    strong_volume = vol >= 1.5
 
-                rsi = indicators.get("rsi", 50)
-                volume_ratio = indicators.get("vol_ratio", 0)
+    # =========================
+    # 🔴 숏 타점 1
+    # 지지 이탈형
+    # =========================
+    if (
+        price < support_break
+        and volume_ok
+        and rsi <= 35
+        and price < ema20
+        and price < ema50
+    ):
+        return {
+            "signal": "SHORT",
+            "type": "지지 이탈 숏",
+            "message": (
+                f"🔴 {symbol} 숏 타점 발생\n"
+                f"유형: 지지 이탈 숏\n"
+                f"현재가: {price}\n"
+                f"거래량비율: {vol}\n"
+                f"RSI: {rsi}\n\n"
+                f"판단: 지지 이탈 + EMA 하단 + 약세 RSI\n"
+                f"행동: 숏 진입 검토\n"
+                f"무효화: {support_break} 위 재진입"
+            )
+        }
 
-                signal = None
+    # =========================
+    # 🔴 숏 타점 2
+    # 저항 반등 실패형
+    # =========================
+    if (
+        price < ema20
+        and price < ema50
+        and rsi < 50
+        and strong_volume
+    ):
+        return {
+            "signal": "SHORT",
+            "type": "저항 반등 실패 숏",
+            "message": (
+                f"🔴 {symbol} 숏 타점 발생\n"
+                f"유형: 저항 반등 실패 숏\n"
+                f"현재가: {price}\n"
+                f"거래량비율: {vol}\n"
+                f"RSI: {rsi}\n\n"
+                f"판단: EMA 저항 아래에서 반등 실패\n"
+                f"행동: 숏 진입 검토\n"
+                f"무효화: {upper_invalid} 위 안착"
+            )
+        }
 
-                if symbol == "ETH":
-                    short_price = 2295
-                    long_price = 2315
-                else:
-                    short_price = 77000
-                    long_price = 78500
+    # =========================
+    # 🟢 롱 타점 1
+    # 저항 돌파형
+    # =========================
+    if (
+        price > resistance_break
+        and volume_ok
+        and rsi >= 55
+        and price > ema20
+        and price > ema50
+    ):
+        return {
+            "signal": "LONG",
+            "type": "저항 돌파 롱",
+            "message": (
+                f"🟢 {symbol} 롱 타점 발생\n"
+                f"유형: 저항 돌파 롱\n"
+                f"현재가: {price}\n"
+                f"거래량비율: {vol}\n"
+                f"RSI: {rsi}\n\n"
+                f"판단: 저항 돌파 + EMA 상단 + RSI 상승\n"
+                f"행동: 롱 진입 검토\n"
+                f"무효화: {resistance_break} 아래 재이탈"
+            )
+        }
 
-                # 🔴 숏 조건
-                if (
-                    volume_ratio >= 1.2
-                    and price < short_price
-                    and rsi <= 30
-                ):
-                    signal = "SHORT"
+    # =========================
+    # 🟢 롱 타점 2
+    # 지지 반등형
+    # =========================
+    if (
+        price > ema20
+        and rsi >= 50
+        and volume_ok
+    ):
+        return {
+            "signal": "LONG",
+            "type": "지지 반등 롱",
+            "message": (
+                f"🟢 {symbol} 롱 타점 발생\n"
+                f"유형: 지지 반등 롱\n"
+                f"현재가: {price}\n"
+                f"거래량비율: {vol}\n"
+                f"RSI: {rsi}\n\n"
+                f"판단: EMA20 위 회복 + RSI 50 이상\n"
+                f"행동: 롱 진입 검토\n"
+                f"무효화: EMA20 아래 재이탈"
+            )
+        }
 
-                # 🟢 롱 조건
-                elif (
-                    volume_ratio >= 1.2
-                    and price > long_price
-                    and rsi >= 50
-                ):
-                    signal = "LONG"
-
-                if signal and last_signal[symbol] != signal:
-                    send_telegram_message(
-                        f"🚨 {symbol} 즉시 조건 알림\n"
-                        f"현재가: {price}\n"
-                        f"신호: {signal}\n"
-                        f"거래량비율: {round(volume_ratio, 2)}\n\n"
-                        f"※ 자동진입 아님. 확인용 알림."
-                    )
-
-                    last_signal[symbol] = signal
-
-                if signal is None:
-                    last_signal[symbol] = None
-
-        except Exception as e:
-            send_telegram_message(f"❌ 조건 감시 오류: {e}")
-
-        await asyncio.sleep(10)
-
-
-async def main():
-    send_telegram_message("🚀 모듈분리 봇 시작\nETH/BTC 정시 분석 + 조건 감시 활성화")
-
-    # 정시 분석
-    asyncio.create_task(hourly_fact_analysis_loop("ETH"))
-    asyncio.create_task(hourly_fact_analysis_loop("BTC"))
-
-    # 실시간 조건 감시
-    asyncio.create_task(condition_monitor_loop())
-
-    while True:
-        await asyncio.sleep(3600)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    return None
