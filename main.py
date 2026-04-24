@@ -1,8 +1,10 @@
 # main.py
 # Railway Telegram Trading Bot
-# 핵심:
+# 수정 반영:
+# - TELEGRAM_TOKEN / TG_BOT_TOKEN 둘 다 지원
+# - TELEGRAM_CHAT_ID / TG_CHAT_ID 둘 다 지원
 # - import 실패 로그 출력
-# - 매 정각 1H 종합 전광판 강제 발송
+# - 매 정각 1H 종합 전광판 발송
 # - 매일 09시 일봉/주간 브리핑 발송
 # - price_skip은 PRE/PULLBACK/REAL에만 적용
 # - 진입레이더/정보성 분석은 price_skip 영향 제거
@@ -90,8 +92,17 @@ except Exception as e:
 # 환경 설정
 # =========================
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+TELEGRAM_TOKEN = (
+    os.getenv("TELEGRAM_TOKEN")
+    or os.getenv("TG_BOT_TOKEN")
+    or ""
+)
+
+TELEGRAM_CHAT_ID = (
+    os.getenv("TELEGRAM_CHAT_ID")
+    or os.getenv("TG_CHAT_ID")
+    or ""
+)
 
 BINANCE_BASE_URL = "https://api.binance.com"
 
@@ -106,6 +117,8 @@ SAME_ALERT_COOLDOWN_SEC = int(os.getenv("SAME_ALERT_COOLDOWN_SEC", "900"))
 TELEGRAM_MIN_INTERVAL_SEC = float(os.getenv("TELEGRAM_MIN_INTERVAL_SEC", "1.2"))
 
 MAX_LOOP_ERROR_COUNT = int(os.getenv("MAX_LOOP_ERROR_COUNT", "10"))
+
+ENABLE_SHEETS = os.getenv("ENABLE_SHEETS", "false").lower() == "true"
 
 
 # =========================
@@ -327,7 +340,7 @@ def telegram_send(text):
     global last_telegram_sent_at
 
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        log("[WARN] TELEGRAM_TOKEN 또는 TELEGRAM_CHAT_ID 없음")
+        log("[WARN] TELEGRAM_TOKEN/TG_BOT_TOKEN 또는 TELEGRAM_CHAT_ID/TG_CHAT_ID 없음")
         print(text, flush=True)
         return False
 
@@ -457,7 +470,14 @@ def run_general_analyzers(symbol, candles_by_tf, structure_result=None):
     return results
 
 
+# =========================
+# Google Sheets / Journal
+# =========================
+
 def record_to_sheet(symbol, event_type, payload):
+    if not ENABLE_SHEETS:
+        return
+
     if sheets is None:
         return
 
@@ -483,6 +503,9 @@ def record_to_sheet(symbol, event_type, payload):
 
 
 def record_to_journal(symbol, event_type, payload):
+    if not ENABLE_SHEETS:
+        return
+
     if signal_journal is None:
         return
 
@@ -591,7 +614,6 @@ def extract_alert_type(result, default_type):
 def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
     current = now_kst()
 
-    # 매 정각 00~04분 사이 1회 발송
     if current.minute > 4:
         return
 
@@ -635,7 +657,6 @@ def run_daily_weekly_briefings_if_needed(symbol, candles_by_tf):
 
     current = now_kst()
 
-    # 매일 오전 9시 00~09분 사이 1회 발송
     if current.hour != 9:
         return
 
@@ -829,11 +850,8 @@ def run_symbol_cycle(symbol):
 
     candles_by_tf = collect_candles(symbol)
 
-    # 1. 정시 1H 종합 전광판
-    # price_skip, 쿨다운 영향 없음
     run_hourly_dashboard_if_needed(symbol, candles_by_tf)
 
-    # 2. 매일 09시 일봉/주간 브리핑
     run_daily_weekly_briefings_if_needed(symbol, candles_by_tf)
 
     price = get_current_price(symbol)
@@ -844,16 +862,13 @@ def run_symbol_cycle(symbol):
 
     price_skip = should_skip_by_price_change(symbol, price)
 
-    # 3. 진입레이더는 price_skip 영향 없이 실행
     run_entry_radar_if_needed(symbol, candles_by_tf)
 
-    # 4. PRE / PULLBACK / REAL만 가격 변화 작으면 생략
     if price_skip:
         log(f"[SKIP ENTRY TIMING ONLY] {symbol} price change too small")
     else:
         run_entry_timing_if_needed(symbol, candles_by_tf)
 
-    # 5. 정보성 분석도 price_skip 영향 없이 실행
     run_info_analyzers_if_needed(symbol, candles_by_tf)
 
     log(f"[END] {symbol} cycle")
@@ -864,8 +879,13 @@ def run_symbol_cycle(symbol):
 # =========================
 
 def send_startup_message():
+    token_source = "TELEGRAM_TOKEN" if os.getenv("TELEGRAM_TOKEN") else "TG_BOT_TOKEN"
+    chat_source = "TELEGRAM_CHAT_ID" if os.getenv("TELEGRAM_CHAT_ID") else "TG_CHAT_ID"
+
     msg = (
         "✅ Railway Telegram Trading Bot 시작\n\n"
+        f"Telegram Token Source: {token_source}\n"
+        f"Telegram Chat Source: {chat_source}\n\n"
         "정시 기능:\n"
         "- 매 정각 1H 종합 전광판 발송\n"
         "- 매일 09시 일봉 브리핑 발송\n"
@@ -881,6 +901,7 @@ def send_startup_message():
         "- 메시지 rate limit\n"
         "- 가격 변화 없으면 PRE/PULLBACK/REAL만 생략\n"
         "- 진입레이더/정보성 분석은 계속 실행\n"
+        "- 구글시트 기록은 ENABLE_SHEETS=true일 때만 실행\n"
         "- 알림 폭주 방지\n"
         "- 무한루프 방지"
     )
