@@ -1,96 +1,70 @@
-from indicators import calculate_indicators
-
-def check_entry_timing(symbol, price, candles_15m, candles_1h, candles_4h):
+def judge_entry_timing(symbol, price, indicators):
     """
-    실전 진입 타점 판단 (가짜 타점 제거 포함)
+    실전 타점 판단 (최종)
     """
 
-    ind_15m = calculate_indicators(candles_15m)
-    ind_1h = calculate_indicators(candles_1h)
-    ind_4h = calculate_indicators(candles_4h)
+    if not price or not indicators:
+        return None
 
-    rsi_15 = ind_15m.get("rsi", 50)
-    rsi_1h = ind_1h.get("rsi", 50)
-    rsi_4h = ind_4h.get("rsi", 50)
+    rsi = indicators.get("rsi")
+    cci = indicators.get("cci")
+    vol = indicators.get("volume_ratio")
+    ema20 = indicators.get("ema20")
+    ema50 = indicators.get("ema50")
 
-    cci_15 = ind_15m.get("cci", 0)
-    cci_1h = ind_1h.get("cci", 0)
-
-    volume_ratio = ind_15m.get("volume_ratio", 0)
-
-    ema20 = ind_15m.get("ema20", price)
-    ema50 = ind_15m.get("ema50", price)
-
-    divergence = ind_15m.get("divergence", None)
-
-    # =========================
-    # ❌ 1. 거래량 필터 (필수)
-    # =========================
-    if volume_ratio < 1.2:
+    if None in [rsi, cci, vol, ema20, ema50]:
         return None
 
     # =========================
-    # ❌ 2. EMA 애매구간 차단
+    # 거래량 필터
     # =========================
-    if ema20 < price < ema50 or ema50 < price < ema20:
+    if vol < 1.2:
         return None
 
     # =========================
-    # ❌ 3. 4H 방향 필터 (핵심)
+    # EMA 애매 구간 차단
     # =========================
-    # 4H 하락 강하면 롱 금지
-    if rsi_4h < 45:
-        long_block = True
-    else:
-        long_block = False
-
-    # 4H 상승 강하면 숏 금지
-    if rsi_4h > 55:
-        short_block = True
-    else:
-        short_block = False
+    if min(ema20, ema50) < price < max(ema20, ema50):
+        return None
 
     # =========================
-    # ❌ 4. 다이버전스 충돌 필터
-    # =========================
-    # 상승 다이버인데 숏 → 차단
-    if divergence == "bullish":
-        short_block = True
-
-    # 하락 다이버인데 롱 → 차단
-    if divergence == "bearish":
-        long_block = True
-
-    # =========================
-    # 🟢 롱 타점
+    # 롱 조건
     # =========================
     if (
-        not long_block
-        and price > ema20
-        and rsi_15 >= 50
-        and rsi_1h >= 50
-        and cci_15 > 0
-        and cci_1h > 0
+        price > ema20
+        and rsi >= 50
+        and cci > 0
     ):
         return {
             "signal": "LONG",
-            "reason": "EMA20 상방 + RSI 상승 + CCI 양수 + 거래량 OK"
+            "type": "기본",
+            "message": (
+                f"🟢 {symbol} 롱 진입\n"
+                f"현재가: {price}\n"
+                f"RSI: {rsi}\n"
+                f"CCI: {cci}\n"
+                f"거래량: {vol}"
+            )
         }
 
     # =========================
-    # 🔴 숏 타점
+    # 숏 조건
     # =========================
     if (
-        not short_block
-        and price < ema20
-        and rsi_15 <= 45
-        and rsi_1h <= 50
-        and cci_15 < 0
-        and cci_1h < 0
+        price < ema20
+        and rsi <= 45
+        and cci < 0
     ):
         return {
             "signal": "SHORT",
-            "reason": "EMA20 하방 + RSI 하락 + CCI 음수 + 거래량 OK"
+            "type": "기본",
+            "message": (
+                f"🔴 {symbol} 숏 진입\n"
+                f"현재가: {price}\n"
+                f"RSI: {rsi}\n"
+                f"CCI: {cci}\n"
+                f"거래량: {vol}"
+            )
         }
 
     return None
