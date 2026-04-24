@@ -1,4 +1,3 @@
-
 import asyncio
 import re
 from datetime import datetime
@@ -26,13 +25,11 @@ from trade_logic import classify_trade, execute_trade
 from sheets import save_to_sheets, get_recent_records
 from scheduler import hourly_fact_analysis_loop
 
-# =========================
-# 🔥 감시 채널 제한 (여기에 네 채널만 넣어라)
-# =========================
+
 MONITOR_CHATS = [
-    # 예시:
-    # -1001234567890,
-    # "channel_username",
+    -1003332441222,
+    -1002931696159,
+    "godofcandle",
 ]
 
 INFO_KEYWORDS = [
@@ -44,11 +41,19 @@ GAEDWAEJI_KEYWORDS = [
     "일봉", "주봉", "월봉", "시나리오", "1안", "2안", "3안", "전고"
 ]
 
+last_signal = {
+    "ETH": None,
+    "BTC": None,
+}
+
+
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M")
 
+
 async def run_blocking(func, *args, **kwargs):
     return await asyncio.to_thread(func, *args, **kwargs)
+
 
 def extract_chat_title(event):
     try:
@@ -60,11 +65,14 @@ def extract_chat_title(event):
     except Exception:
         return ""
 
+
 def is_info_message(text):
     return any(keyword in text for keyword in INFO_KEYWORDS)
 
+
 def is_gaedwaeji_message(text):
     return any(keyword in text for keyword in GAEDWAEJI_KEYWORDS)
+
 
 def is_candle_view_message(chat_title, text):
     text_no_space = text.replace(" ", "")
@@ -87,11 +95,58 @@ def is_candle_view_message(chat_title, text):
 
     return title_hit or keyword_hit
 
+
 def extract_symbol(text):
     match = re.search(r"#([A-Za-z]{2,10})", text)
     if not match:
         return None
     return match.group(1).upper()
+
+
+async def condition_monitor_loop(symbol):
+    global last_signal
+
+    while True:
+        try:
+            price = await run_blocking(get_current_price, symbol)
+            candles = await run_blocking(get_candles, symbol, "15", 60)
+            indicators = await run_blocking(calculate_indicators, candles)
+
+            if not price or not indicators:
+                await asyncio.sleep(60)
+                continue
+
+            ema20 = indicators["ema20"]
+            ema50 = indicators["ema50"]
+            vol = indicators["vol_ratio"]
+
+            signal = None
+
+            if price > ema20 and vol >= 1.5:
+                signal = "LONG"
+
+            elif price < ema50 and vol >= 1.5:
+                signal = "SHORT"
+
+            if signal and last_signal[symbol] != signal:
+                send_telegram_message(
+                    f"🚨 {symbol} 즉시 조건 알림\n"
+                    f"현재가: {price}\n"
+                    f"신호: {signal}\n"
+                    f"거래량비율: {vol}\n\n"
+                    f"※ 자동진입 아님. 확인용 알림."
+                )
+
+                last_signal[symbol] = signal
+
+            if signal is None:
+                last_signal[symbol] = None
+
+        except Exception as e:
+            print(f"[조건 감시 오류] {symbol}: {e}")
+
+        await asyncio.sleep(60)
+
 
 async def main():
     client = TelegramClient(
@@ -105,10 +160,21 @@ async def main():
     send_telegram_message(
         "🚀 모듈분리 봇 시작\n"
         f"ENABLE_AUTO_TRADE={ENABLE_AUTO_TRADE}\n"
-        "1시간 자동 팩트기반구조분석 활성화"
+        "ETH/BTC 정시 분석 + 조건 감시 활성화"
     )
 
+    # =========================
+    # 정시 팩트기반구조분석
+    # =========================
     asyncio.create_task(hourly_fact_analysis_loop("ETH"))
+    asyncio.create_task(hourly_fact_analysis_loop("BTC"))
+
+    # =========================
+    # 조건 충족 즉시 알림
+    # 자동진입 아님
+    # =========================
+    asyncio.create_task(condition_monitor_loop("ETH"))
+    asyncio.create_task(condition_monitor_loop("BTC"))
 
     @client.on(events.NewMessage(pattern=r"^/복기$"))
     async def bokgi_handler(event):
@@ -138,13 +204,8 @@ async def main():
 
         await event.respond(msg)
 
-    # =========================
-    # 🔥 핵심 수정된 부분
-    # =========================
     @client.on(events.NewMessage(chats=MONITOR_CHATS))
     async def handler(event):
-
-        # ✅ 봇이 보낸 메시지 무시 (무한루프 차단)
         if event.out:
             return
 
@@ -160,16 +221,10 @@ async def main():
         chat_title = extract_chat_title(event)
         now = now_str()
 
-        # =========================
-        # 1. 이미지
-        # =========================
         if event.message.photo:
-            send_telegram_message("📸 이미지 메시지 감지됨 (추후 분석 연결 예정)")
+            send_telegram_message("📸 이미지 메시지 감지됨. 이미지 분석은 다음 단계에서 연결 예정")
             return
 
-        # =========================
-        # 2. 캔들의신
-        # =========================
         if is_candle_view_message(chat_title, text):
             result = await run_blocking(analyze_candle_view, text)
 
@@ -186,9 +241,6 @@ async def main():
             )
             return
 
-        # =========================
-        # 3. 개돼지
-        # =========================
         if is_gaedwaeji_message(text):
             send_telegram_message("🐷 개돼지기법 분석 시작")
 
@@ -203,9 +255,6 @@ async def main():
             )
             return
 
-        # =========================
-        # 4. 정보
-        # =========================
         if is_info_message(text):
             send_telegram_message("📊 정보성 메시지 분석 시작")
 
@@ -220,9 +269,6 @@ async def main():
             )
             return
 
-        # =========================
-        # 5. 급등주
-        # =========================
         symbol = extract_symbol(text)
 
         if not symbol:
@@ -271,6 +317,7 @@ async def main():
             )
 
     await client.run_until_disconnected()
+
 
 if __name__ == "__main__":
     try:
