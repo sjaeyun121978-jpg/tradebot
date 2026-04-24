@@ -3,14 +3,47 @@ from claude_client import call_claude
 
 def build_fact_analysis_prompt(symbol, price, indicators):
     ind_text = ""
+    structure_text = ""
+
     if indicators:
         ind_text = f"""
 현재가: {price}
-RSI: {indicators['rsi']}
-MACD: {indicators['macd_cross']}
-EMA20: {indicators['ema20']}
-EMA50: {indicators['ema50']}
-거래량비율: {indicators['vol_ratio']}
+RSI: {indicators.get('rsi')}
+MACD: {indicators.get('macd_cross')}
+EMA20: {indicators.get('ema20')}
+EMA50: {indicators.get('ema50')}
+거래량비율: {indicators.get('vol_ratio')}
+"""
+
+        if "structure" in indicators:
+            s = indicators["structure"]
+
+            structure_text = f"""
+구조 분석 데이터:
+
+15M:
+구조: {s.get('15M', {}).get('structure')}
+파동: {s.get('15M', {}).get('wave')}
+엘리엇: {s.get('15M', {}).get('elliott')}
+유사패턴: {s.get('15M', {}).get('similar_case')}
+
+1H:
+구조: {s.get('1H', {}).get('structure')}
+파동: {s.get('1H', {}).get('wave')}
+엘리엇: {s.get('1H', {}).get('elliott')}
+유사패턴: {s.get('1H', {}).get('similar_case')}
+
+4H:
+구조: {s.get('4H', {}).get('structure')}
+파동: {s.get('4H', {}).get('wave')}
+엘리엇: {s.get('4H', {}).get('elliott')}
+유사패턴: {s.get('4H', {}).get('similar_case')}
+
+1D:
+구조: {s.get('1D', {}).get('structure')}
+파동: {s.get('1D', {}).get('wave')}
+엘리엇: {s.get('1D', {}).get('elliott')}
+유사패턴: {s.get('1D', {}).get('similar_case')}
 """
 
     return f"""
@@ -27,12 +60,15 @@ EMA50: {indicators['ema50']}
 - 지금 행동을 가장 먼저 제시
 - 롱/숏 확률 차이 10% 미만이면 진입 금지
 - 거래량 부족이면 즉시 진입 금지
+- 지표만 보지 말고 구조, 파동, 엘리엇, 유사패턴까지 함께 판단
 - 조건 설명이 아니라 행동 지시로 작성
 - 초보자가 보고 바로 롱 / 숏 / 대기 / 진입금지를 알 수 있어야 함
 
 코인: {symbol}
 
 {ind_text}
+
+{structure_text}
 
 아래 출력 형식 절대 변경 금지:
 
@@ -59,9 +95,13 @@ EMA50: {indicators['ema50']}
 (🟢 HH/HL 상승 / 🔴 LH/LL 하락 / 🟡 박스권 / 🟡 전환초입 중 하나)
 → 초보자용 한줄 해석
 
-📊 파동 상태
-(🟢 상승파동 / 🔴 하락파동 / 🟡 조정파동 / 🟡 파동 대기 중 하나)
-→ 현재가 추세파동인지 조정파동인지 한줄
+📊 파동 / 엘리엇
+(현재 파동 위치: 상승파 / 하락파 / 조정파 / ABC / 3파 / 5파 / 대기 중 하나)
+→ 왜 그렇게 보는지 한줄
+
+📊 과거 유사 구조
+(하락 중 약반등 / 상승 전 눌림 / 플랫 후 재하락 / 바닥 다지기 / 방향 대기 중 하나)
+→ 현재 차트와 연결해서 한줄
 
 📊 지표
 EMA (🟢/🟡/🔴) 한줄
