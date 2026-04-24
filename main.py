@@ -32,41 +32,24 @@ GAEDWAEJI_KEYWORDS = [
 ]
 
 BOT_IGNORE_KEYWORDS = [
-    "모듈분리 봇 시작",
-    "봇 시작",
-    "AUTO_TRADE",
-    "정시 팩트기반구조분석",
-    "실전 타점 알림",
-    "실전 타점",
-    "REAL ENTRY",
-    "PRE-ENTRY",
-    "PULLBACK ENTRY",
-    "즉시 조건 알림",
-    "조건 감시 오류",
-    "급등주 AI 분석 시작",
-    "진입 레이더",
-    "📊 정보 분석",
-    "📊 BTC 정시",
-    "📊 ETH 정시",
-    "📊 BTC 종합상황판",
-    "📊 ETH 종합상황판",
-    "트레이딩 분석 요약",
-    "코인:",
-    "상황:",
-    "판단:",
-    "대응:",
-    "근거:",
-    "핵심:",
-    "최종 판단",
-    "현재 행동",
-    "방향 점수",
-    "진입 금지",
-    "관망",
+    "모듈분리 봇 시작", "봇 시작", "AUTO_TRADE",
+    "정시 팩트기반구조분석", "실전 타점 알림", "실전 타점",
+    "REAL ENTRY", "PRE-ENTRY", "PULLBACK ENTRY", "즉시 조건 알림",
+    "조건 감시 오류", "급등주 AI 분석 시작", "진입 레이더",
+    "📊 정보 분석", "📊 BTC 정시", "📊 ETH 정시",
+    "📊 BTC 종합상황판", "📊 ETH 종합상황판",
+    "트레이딩 분석 요약", "코인:", "상황:", "판단:", "대응:",
+    "근거:", "핵심:", "최종 판단", "현재 행동", "방향 점수",
+    "진입 금지", "관망",
 ]
 
 last_signal = {"ETH": None, "BTC": None}
+last_signal_time = {"ETH": 0, "BTC": 0}
+last_signal_score = {"ETH": 0, "BTC": 0}
+
 last_debug_time = {"ETH": 0, "BTC": 0}
 last_debug_score = {"ETH": 0, "BTC": 0}
+last_debug_direction = {"ETH": None, "BTC": None}
 
 
 def now_str():
@@ -116,7 +99,7 @@ def is_candle_view_message(chat_title, text):
             "추세파동",
             "임펄스",
             "조정파",
-            "관점"
+            "관점",
         ])
     )
 
@@ -148,6 +131,53 @@ async def build_indicators_with_structure(symbol):
     return price, indicators
 
 
+def should_send_timing(symbol, signal_key, score):
+    now = time.time()
+
+    if last_signal[symbol] != signal_key:
+        last_signal[symbol] = signal_key
+        last_signal_time[symbol] = now
+        last_signal_score[symbol] = score
+        return True
+
+    if now - last_signal_time[symbol] >= 900:
+        last_signal_time[symbol] = now
+        last_signal_score[symbol] = score
+        return True
+
+    if score >= last_signal_score[symbol] + 10:
+        last_signal_time[symbol] = now
+        last_signal_score[symbol] = score
+        return True
+
+    return False
+
+
+def should_send_debug(symbol, direction, score):
+    now = time.time()
+
+    if score < 60:
+        return False
+
+    if last_debug_direction[symbol] != direction:
+        last_debug_direction[symbol] = direction
+        last_debug_time[symbol] = now
+        last_debug_score[symbol] = score
+        return True
+
+    if now - last_debug_time[symbol] >= 900:
+        last_debug_time[symbol] = now
+        last_debug_score[symbol] = score
+        return True
+
+    if score >= last_debug_score[symbol] + 15:
+        last_debug_time[symbol] = now
+        last_debug_score[symbol] = score
+        return True
+
+    return False
+
+
 def record_timing_signal(symbol, price, timing):
     try:
         raw_message = timing.get("message", "")
@@ -164,7 +194,7 @@ def record_timing_signal(symbol, price, timing):
             tp1="-",
             tp2="-",
             detail=raw_message,
-            raw_message=raw_message
+            raw_message=raw_message,
         )
     except Exception as e:
         send_telegram_message(f"❌ 신호기록 실패: {e}")
@@ -182,46 +212,36 @@ async def condition_monitor_loop():
                 timing = judge_entry_timing(symbol, price, indicators)
 
                 if timing:
+                    debug_for_score = get_entry_debug_status(symbol, price, indicators)
+                    score = debug_for_score.get("score", 0) if debug_for_score else 0
+
                     signal_key = f"{timing['signal']}_{timing['type']}"
 
-                    if last_signal[symbol] != signal_key:
+                    if should_send_timing(symbol, signal_key, score):
                         send_telegram_message(
                             f"🚨 {symbol} 실전 타점\n\n"
                             f"{timing['message']}\n\n"
                             f"※ 자동진입 아님. 확인용 알림."
                         )
-
                         record_timing_signal(symbol, price, timing)
 
-                        last_signal[symbol] = signal_key
                     continue
-
-                last_signal[symbol] = None
 
                 debug = get_entry_debug_status(symbol, price, indicators)
 
                 if debug:
-                    current_time = time.time()
-                    score = debug["score"]
+                    direction = debug.get("signal", "WAIT")
+                    score = debug.get("score", 0)
 
-                    if (
-                        score >= 60
-                        and (
-                            current_time - last_debug_time[symbol] >= 300
-                            or score >= last_debug_score[symbol] + 10
-                        )
-                    ):
+                    if should_send_debug(symbol, direction, score):
                         send_telegram_message(
                             f"🛰️ {symbol} 진입 레이더\n\n"
-                            f"방향: {debug['signal']}\n"
+                            f"방향: {direction}\n"
                             f"조건충족: {score}%\n"
                             f"가격: {price}\n\n"
                             f"{debug['detail']}\n\n"
                             f"※ 진입 신호 아님. 조건 진행률 알림."
                         )
-
-                        last_debug_time[symbol] = current_time
-                        last_debug_score[symbol] = score
 
         except Exception as e:
             send_telegram_message(f"❌ 조건 감시 오류: {e}")
@@ -252,7 +272,7 @@ async def analyze_geupdeungju(symbol, chat_title, text):
     await run_blocking(
         save_to_sheets,
         "급등주",
-        [now, chat_title, symbol, price, text[:200], result]
+        [now, chat_title, symbol, price, text[:200], result],
     )
 
     trade_type, entry_price = await run_blocking(classify_trade, symbol)
@@ -268,7 +288,7 @@ async def analyze_geupdeungju(symbol, chat_title, text):
         await run_blocking(
             save_to_sheets,
             "자동매매",
-            [now, symbol, trade_type, entry_price]
+            [now, symbol, trade_type, entry_price],
         )
 
 
@@ -276,7 +296,7 @@ async def main():
     client = TelegramClient(
         StringSession(SESSION_STRING),
         TG_API_ID,
-        TG_API_HASH
+        TG_API_HASH,
     )
 
     await client.start()
@@ -341,7 +361,7 @@ async def main():
                 await run_blocking(
                     save_to_sheets,
                     "캔들의신해석",
-                    [now, chat_title, text[:200], result]
+                    [now, chat_title, text[:200], result],
                 )
                 return
 
@@ -357,7 +377,7 @@ async def main():
                 await run_blocking(
                     save_to_sheets,
                     "개돼지기준",
-                    [now, chat_title, text[:200], result]
+                    [now, chat_title, text[:200], result],
                 )
                 return
 
@@ -379,7 +399,7 @@ async def main():
                 await run_blocking(
                     save_to_sheets,
                     "정보분석",
-                    [now, chat_title, text[:200], result]
+                    [now, chat_title, text[:200], result],
                 )
                 return
 
