@@ -1,136 +1,71 @@
 import asyncio
 from datetime import datetime, timedelta
 
-from telegram_utils import send_telegram_message
 from bybit_client import get_current_price, get_candles
 from indicators import calculate_indicators
 from analyzers import analyze_fact
-
-# =========================
-# 상태 저장 (중복 방지)
-# =========================
-last_signal = {}
-
-# =========================
-# 공용 함수
-# =========================
-async def run_blocking(func, *args, **kwargs):
-    return await asyncio.to_thread(func, *args, **kwargs)
+from telegram_utils import send_telegram_message
+from sheets import save_to_sheets
 
 
-# =========================
-# 1. 정시 팩트 분석 (ETH, BTC 분리 발송)
-# =========================
-async def hourly_fact_analysis_loop():
-    while True:
-        try:
-            now = datetime.now()
-
-            # 다음 정시까지 대기
-            next_hour = (now + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-            wait_seconds = (next_hour - now).total_seconds()
-
-            await asyncio.sleep(wait_seconds)
-
-            for symbol in ["ETH", "BTC"]:
-                price = await run_blocking(get_current_price, symbol)
-                candles = await run_blocking(get_candles, symbol, "15", 60)
-                indicators = await run_blocking(calculate_indicators, candles)
-
-                result = await run_blocking(
-                    analyze_fact,
-                    symbol,
-                    price,
-                    indicators
-                )
-
-                send_telegram_message(
-                    f"📊 {symbol} 정시 팩트기반구조분석\n"
-                    f"시간: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
-                    f"현재가: {price}\n\n"
-                    f"{result}"
-                )
-
-        except Exception as e:
-            print(f"[정시 분석 오류] {e}")
-            await asyncio.sleep(60)
+DEFAULT_SYMBOL = "ETH"
 
 
-# =========================
-# 2. 실시간 트리거 감시 (핵심)
-# =========================
-async def condition_monitor_loop(symbol):
-    global last_signal
+def seconds_until_next_hour():
+    now = datetime.now()
 
-    prev_price = None
-    last_alert_time = None
+    next_hour = (now + timedelta(hours=1)).replace(
+        minute=0,
+        second=5,
+        microsecond=0
+    )
+
+    return (next_hour - now).total_seconds()
+
+
+async def run_once(symbol=DEFAULT_SYMBOL, mode="정시"):
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        price = await asyncio.to_thread(get_current_price, symbol)
+        candles = await asyncio.to_thread(get_candles, symbol, "15", 60)
+        indicators = await asyncio.to_thread(calculate_indicators, candles)
+
+        result = await asyncio.to_thread(
+            analyze_fact,
+            symbol,
+            price,
+            indicators
+        )
+
+        message = (
+            f"📊 {symbol} {mode} 팩트기반구조분석\n"
+            f"시간: {now}\n"
+            f"현재가: {price}\n\n"
+            f"{result}"
+        )
+
+        send_telegram_message(message)
+
+        await asyncio.to_thread(
+            save_to_sheets,
+            "팩트기반분석",
+            [now, symbol, price, result]
+        )
+
+    except Exception as e:
+        send_telegram_message(f"❌ {symbol} {mode} 팩트기반구조분석 실패: {e}")
+
+
+async def hourly_fact_analysis_loop(symbol=DEFAULT_SYMBOL):
+    # 실행 직후 1회 테스트 분석
+    await run_once(symbol, mode="즉시")
 
     while True:
-        try:
-            price = await run_blocking(get_current_price, symbol)
-            candles = await run_blocking(get_candles, symbol, "15", 60)
-            indicators = await run_blocking(calculate_indicators, candles)
+        wait_seconds = seconds_until_next_hour()
 
-            if not price or not indicators:
-                await asyncio.sleep(60)
-                continue
+        print(f"[스케줄러] {symbol} 다음 정시 분석까지 {int(wait_seconds)}초 대기")
 
-            ema20 = indicators["ema20"]
-            ema50 = indicators["ema50"]
-            vol = indicators["vol_ratio"]
+        await asyncio.sleep(wait_seconds)
 
-            signal = None
-
-            # =========================
-            # 🔥 돌파 기반 트리거
-            # =========================
-            if prev_price:
-                # 롱 돌파
-                if prev_price <= ema20 and price > ema20 and vol >= 1.5:
-                    signal = "LONG"
-
-                # 숏 이탈
-                elif prev_price >= ema50 and price < ema50 and vol >= 1.5:
-                    signal = "SHORT"
-
-            # =========================
-            # ⛔ 쿨타임 (10분)
-            # =========================
-            now = datetime.now()
-
-            if signal:
-                if last_alert_time and (now - last_alert_time).seconds < 600:
-                    signal = None
-
-            # =========================
-            # 알림 발송
-            # =========================
-            if signal:
-                send_telegram_message(
-                    f"🚨 {symbol} 트리거 발생\n"
-                    f"현재가: {price}\n"
-                    f"신호: {signal}\n"
-                    f"거래량비율: {vol}\n\n"
-                    f"※ 돌파 기반 1회 신호"
-                )
-
-                last_signal[symbol] = signal
-                last_alert_time = now
-
-            prev_price = price
-
-        except Exception as e:
-            print(f"[트리거 오류] {symbol}: {e}")
-
-        await asyncio.sleep(60)
-
-
-# =========================
-# 3. 실행 스타터
-# =========================
-async def start_all_loops():
-    asyncio.create_task(hourly_fact_analysis_loop())
-
-    # ETH, BTC 각각 따로 감시
-    asyncio.create_task(condition_monitor_loop("ETH"))
-    asyncio.create_task(condition_monitor_loop("BTC"))
+        await run_once(symbol, mode="정시")
