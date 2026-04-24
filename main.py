@@ -16,6 +16,7 @@ from analyzers import analyze_info, analyze_gaedwaeji, analyze_candle_view, anal
 from trade_logic import classify_trade, execute_trade
 from sheets import save_to_sheets, get_recent_records
 from scheduler import hourly_fact_analysis_loop
+from signal_journal import record_signal
 
 
 SYMBOLS = ["ETH", "BTC"]
@@ -37,6 +38,9 @@ BOT_IGNORE_KEYWORDS = [
     "정시 팩트기반구조분석",
     "실전 타점 알림",
     "실전 타점",
+    "REAL ENTRY",
+    "PRE-ENTRY",
+    "PULLBACK ENTRY",
     "즉시 조건 알림",
     "조건 감시 오류",
     "급등주 AI 분석 시작",
@@ -59,7 +63,6 @@ BOT_IGNORE_KEYWORDS = [
     "진입 금지",
     "관망",
 ]
-
 
 last_signal = {"ETH": None, "BTC": None}
 last_debug_time = {"ETH": 0, "BTC": 0}
@@ -145,6 +148,28 @@ async def build_indicators_with_structure(symbol):
     return price, indicators
 
 
+def record_timing_signal(symbol, price, timing):
+    try:
+        raw_message = timing.get("message", "")
+        signal = timing.get("signal", "")
+        level = timing.get("type", "")
+
+        record_signal(
+            symbol=symbol,
+            signal=signal,
+            level=level,
+            price=price,
+            score="-",
+            stop_loss="-",
+            tp1="-",
+            tp2="-",
+            detail=raw_message,
+            raw_message=raw_message
+        )
+    except Exception as e:
+        send_telegram_message(f"❌ 신호기록 실패: {e}")
+
+
 async def condition_monitor_loop():
     while True:
         try:
@@ -161,8 +186,13 @@ async def condition_monitor_loop():
 
                     if last_signal[symbol] != signal_key:
                         send_telegram_message(
-                            f"🚨 {symbol} 실전 타점\n\n{timing['message']}"
+                            f"🚨 {symbol} 실전 타점\n\n"
+                            f"{timing['message']}\n\n"
+                            f"※ 자동진입 아님. 확인용 알림."
                         )
+
+                        record_timing_signal(symbol, price, timing)
+
                         last_signal[symbol] = signal_key
                     continue
 
@@ -254,7 +284,7 @@ async def main():
     send_telegram_message(
         f"🚀 봇 시작\n"
         f"ENABLE_AUTO_TRADE={ENABLE_AUTO_TRADE}\n"
-        f"정시 분석 + 타점 감시 + 진입 레이더 + 채널 분석 활성화"
+        f"정시 분석 + 타점 감시 + 진입 레이더 + 채널 분석 + 신호기록 활성화"
     )
 
     asyncio.create_task(hourly_fact_analysis_loop("ETH"))
@@ -264,6 +294,7 @@ async def main():
     @client.on(events.NewMessage(pattern=r"^/복기$"))
     async def bokgi_handler(event):
         rows = await run_blocking(get_recent_records, "개돼지기준", 3)
+
         if not rows:
             await event.respond("📭 저장된 개돼지기준 없음")
         else:
@@ -272,6 +303,7 @@ async def main():
     @client.on(events.NewMessage(pattern=r"^/매매현황$"))
     async def trade_status_handler(event):
         rows = await run_blocking(get_recent_records, "자동매매", 5)
+
         if not rows:
             await event.respond("📭 자동매매 내역 없음")
         else:
@@ -299,11 +331,13 @@ async def main():
 
             if is_candle_view_message(chat_title, text):
                 result = await run_blocking(analyze_candle_view, text)
+
                 send_telegram_message(
                     f"📘 캔들의신 관점 해석\n"
                     f"채널: {chat_title}\n\n"
                     f"{result}"
                 )
+
                 await run_blocking(
                     save_to_sheets,
                     "캔들의신해석",
@@ -313,11 +347,13 @@ async def main():
 
             if is_gaedwaeji_message(text):
                 result = await run_blocking(analyze_gaedwaeji, text)
+
                 send_telegram_message(
                     f"🐷 개돼지기법 시나리오 분석\n"
                     f"채널: {chat_title}\n\n"
                     f"{result}"
                 )
+
                 await run_blocking(
                     save_to_sheets,
                     "개돼지기준",
@@ -333,11 +369,13 @@ async def main():
 
             if is_info_message(text):
                 result = await run_blocking(analyze_info, text)
+
                 send_telegram_message(
                     f"📊 정보성 메시지 분석\n"
                     f"채널: {chat_title}\n\n"
                     f"{result}"
                 )
+
                 await run_blocking(
                     save_to_sheets,
                     "정보분석",
