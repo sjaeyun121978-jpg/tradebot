@@ -1,6 +1,9 @@
 # chart_renderer.py
 # 진입레이더 카드 이미지(PNG) 생성
 # 기존 카드 디자인 유지 + Railway 한글 폰트 직접 로딩 안정 버전
+# 수정 반영:
+# 1. MACD 위치 오류 수정: RSI/CCI와 같은 지표 그리드에 포함
+# 2. 제한 사유 개선: reason 단일값이 아니라 진입 제한 사유 자동 생성
 
 import io
 import os
@@ -114,6 +117,66 @@ def _split_symbol(symbol):
     return symbol, ""
 
 
+def _build_limit_reasons(sig):
+    """
+    제한 = 지금 진입하면 안 되는 이유
+    reason 하나만 출력하지 않고, 현재 신호 데이터에서 제한 사유를 자동 생성한다.
+    """
+    reasons = []
+
+    confidence = int(_sig_get(sig, "confidence", "confidence_score", default=0))
+    direction = _sig_get(sig, "direction", default="WAIT")
+
+    is_range = _sig_get(sig, "is_range", default=False)
+    range_position = _sig_get(sig, "range_position", default=None)
+
+    trend_15m = _sig_get(sig, "trend_15m", default="SIDEWAYS")
+    trend_1h = _sig_get(sig, "trend_1h", default="SIDEWAYS")
+
+    volume = _safe_num(_sig_get(sig, "volume", default=0))
+    avg_volume = _safe_num(_sig_get(sig, "avg_volume_20", default=0))
+
+    raw_reason = _sig_get(sig, "reason", default="")
+
+    if confidence < 60:
+        reasons.append("신뢰도 60% 미만")
+
+    if is_range and range_position == "MIDDLE":
+        reasons.append("박스권 중앙")
+
+    if direction == "LONG":
+        if trend_15m != "UP":
+            reasons.append("15M 상승 미확정")
+        if trend_1h == "DOWN":
+            reasons.append("1H 하락 충돌")
+
+    elif direction == "SHORT":
+        if trend_15m != "DOWN":
+            reasons.append("15M 하락 미확정")
+        if trend_1h == "UP":
+            reasons.append("1H 상승 충돌")
+
+    else:
+        reasons.append("방향 미확정")
+
+    if avg_volume > 0 and volume < avg_volume * 0.8:
+        reasons.append("거래량 부족")
+
+    if not reasons:
+        if raw_reason:
+            reasons.append(raw_reason)
+        else:
+            reasons.append("진입 조건 미완성")
+
+    # 중복 제거
+    unique = []
+    for r in reasons:
+        if r and r not in unique:
+            unique.append(r)
+
+    return unique[:3]
+
+
 # ─────────────────────────────────────────────
 # 단일 카드 이미지 생성
 # ─────────────────────────────────────────────
@@ -147,7 +210,6 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     trend_1h = _sig_get(sig, "trend_1h", default="SIDEWAYS")
 
     div = _sig_get(sig, "divergence", default=None)
-    reason = _sig_get(sig, "reason", default="")
 
     is_btc = "BTC" in str(symbol).upper()
     accent = LIME_GREEN if is_btc else PURPLE
@@ -416,24 +478,32 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     ax_ind.set_facecolor(BG_DARK)
     ax_ind.axis("off")
 
+    macd_color = (
+        RED if macd_raw in ("BEARISH", "NEGATIVE")
+        else GREEN if macd_raw in ("BULLISH", "POSITIVE")
+        else TEXT_MUTED
+    )
+
     cells = [
         ("15M", _TREND_KO.get(trend_15m, "횡보"), _trend_color(trend_15m)),
         ("1H", _TREND_KO.get(trend_1h, "횡보"), _trend_color(trend_1h)),
         ("RSI", f"{rsi_val:.2f} {'약세↓' if rsi_val < 50 else '강세↑'}", RED if rsi_val < 50 else GREEN),
         ("CCI", f"{cci_val:.2f} {'약세↓' if cci_val < 0 else '강세↑'}", RED if cci_val < 0 else GREEN),
+        ("MACD", f"{macd_raw} {macd_str}", macd_color),
     ]
 
     for idx, (label, val, color) in enumerate(cells):
         col = idx % 2
         row = idx // 2
+
         x = 0.02 + col * 0.50
-        y = 0.80 - row * 0.42
+        y = 0.84 - row * 0.31
 
         ax_ind.add_patch(
             FancyBboxPatch(
-                (x, y - 0.28),
+                (x, y - 0.24),
                 0.46,
-                0.30,
+                0.24,
                 boxstyle="round,pad=0.01",
                 facecolor=BG_CELL,
                 edgecolor="#21262d",
@@ -454,7 +524,7 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
         ax_ind.text(
             x + 0.03,
-            y - 0.18,
+            y - 0.15,
             val,
             color=color,
             fontsize=10,
@@ -462,42 +532,6 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
             va="top",
             transform=ax_ind.transAxes,
         )
-
-    ax_ind.add_patch(
-        FancyBboxPatch(
-            (0.02, 0.0),
-            0.96,
-            0.28,
-            boxstyle="round,pad=0.01",
-            facecolor=BG_CELL,
-            edgecolor="#21262d",
-            linewidth=0.6,
-            transform=ax_ind.transAxes,
-        )
-    )
-
-    macd_color = (
-        RED if macd_raw in ("BEARISH", "NEGATIVE")
-        else GREEN if macd_raw in ("BULLISH", "POSITIVE")
-        else TEXT_MUTED
-    )
-
-    ax_ind.text(
-        0.05, 0.24, "MACD",
-        color=TEXT_MUTED,
-        fontsize=8,
-        va="top",
-        transform=ax_ind.transAxes,
-    )
-
-    ax_ind.text(
-        0.05, 0.10, f"{macd_raw} {macd_str}",
-        color=macd_color,
-        fontsize=10,
-        fontweight="bold",
-        va="top",
-        transform=ax_ind.transAxes,
-    )
 
     # ─── 하단 행동 ───────────────────────────
     ax_bot = fig.add_subplot(gs[5])
@@ -507,8 +541,10 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
     lines = []
 
-    if reason:
-        lines.append(("제한", reason, AMBER))
+    limit_reasons = _build_limit_reasons(sig)
+
+    for r in limit_reasons[:2]:
+        lines.append(("제한", r, AMBER))
 
     if direction == "SHORT":
         lines.append(("숏", "박스 하단 이탈 확인 후", RED))
