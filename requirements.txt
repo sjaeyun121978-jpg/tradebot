@@ -4,3 +4,5 @@ requests
 gspread
 google-auth
 ta
+matplotlib
+Pillow
