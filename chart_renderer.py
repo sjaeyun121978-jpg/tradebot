@@ -4,10 +4,59 @@
 # structure_analyzer.analyze() 결과를 받아서 이미지로 변환
 
 import io
+import os
 import textwrap
 from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
+
+
+# ─────────────────────────────────────────────
+# 한글 폰트 설정 (Railway/Linux 환경)
+# ─────────────────────────────────────────────
+
+def _setup_korean_font():
+    """
+    Linux 서버에서 한글 폰트 자동 탐색 후 설정
+    우선순위: NanumGothic → NotoSansCJK → UnDotum → fallback
+    """
+    import matplotlib
+    import matplotlib.font_manager as fm
+
+    # 1) 설치된 폰트명으로 탐색
+    candidates = [
+        "NanumGothic", "NanumBarunGothic",
+        "NotoSansCJK", "NotoSansCJKkr",
+        "UnDotum", "UnBatang", "Malgun Gothic",
+    ]
+    available = {f.name for f in fm.fontManager.ttflist}
+    for name in candidates:
+        if name in available:
+            matplotlib.rcParams["font.family"] = name
+            matplotlib.rcParams["axes.unicode_minus"] = False
+            return name
+
+    # 2) 파일 경로로 직접 탐색
+    font_paths = [
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/unfonts-core/UnDotum.ttf",
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            prop = fm.FontProperties(fname=path)
+            matplotlib.rcParams["font.family"] = prop.get_name()
+            matplotlib.rcParams["axes.unicode_minus"] = False
+            return prop.get_name()
+
+    # 3) fallback
+    matplotlib.rcParams["font.family"] = "DejaVu Sans"
+    matplotlib.rcParams["axes.unicode_minus"] = False
+    return "DejaVu Sans"
+
+
+_KOREAN_FONT = _setup_korean_font()
 
 # ─────────────────────────────────────────────
 # 색상 팔레트
