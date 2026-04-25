@@ -587,67 +587,66 @@ def is_pullback_entry(signal):
     return False, "PULLBACK 조건 미충족"
 
 
+# ─────────────────────────────────────────────
+# ★ 변경된 함수: make_radar_message (새 포맷)
+# ─────────────────────────────────────────────
 def make_radar_message(signal, reason):
     direction = signal.get("direction")
     confidence = signal.get("confidence_score", 0)
-
-    if direction == "LONG":
-        state_text = "LONG 감시"
-        action_text = "진입 금지, 롱 후보만 관찰"
-        next_long = "저항선 돌파 확인"
-        next_short = "지지선 이탈 전 무시"
-    elif direction == "SHORT":
-        state_text = "SHORT 감시"
-        action_text = "진입 금지, 숏 후보만 관찰"
-        next_long = "박스 상단 돌파 전 무시"
-        next_short = "박스 하단 이탈 확인"
-    else:
-        state_text = "WAIT"
-        action_text = "진입 금지, 방향 확정 대기"
-        next_long = "상단 돌파 확인"
-        next_short = "하단 이탈 확인"
+    long_score = signal.get("long_score", 0)
+    short_score = signal.get("short_score", 0)
 
     rsi_value = signal.get("rsi", 50)
     cci_value = signal.get("cci", 0)
     macd = signal.get("macd_state", "NEUTRAL")
 
-    rsi_text = "강세" if rsi_value >= 50 else "약세"
-    cci_text = "강세" if cci_value >= 0 else "약세"
+    trend_15m = signal.get("trend_15m", "-")
+    trend_1h = signal.get("trend_1h", "-")
 
-    limitation = reason if reason else "제한 요소 없음"
+    trend_map = {"UP": "상승", "DOWN": "하락", "SIDEWAYS": "횡보"}
+    t15 = trend_map.get(trend_15m, trend_15m)
+    t1h = trend_map.get(trend_1h, trend_1h)
 
-    return f"""📡 {signal.get('symbol')} 진입레이더
-역할: 이 종목 봐라
+    rsi_text = "강세↑" if rsi_value >= 50 else "약세↓"
+    cci_text = "강세↑" if cci_value >= 0 else "약세↓"
 
-🧭 한눈판정
-상태: {state_text}
-신뢰도: {confidence}%
-구간: 레이더 감시 구간
-행동: {action_text}
+    macd_map = {
+        "BULLISH": "강세↑",
+        "BEARISH": "약세↓",
+        "POSITIVE": "양전환",
+        "NEGATIVE": "음전환",
+        "NEUTRAL": "중립"
+    }
+    macd_text = macd_map.get(macd, macd)
 
-🎯 방향 점수
-LONG  {signal.get('long_score')}%
-SHORT {signal.get('short_score')}%
-차이   {signal.get('score_gap')}%
+    if direction == "SHORT":
+        dir_badge = "SHORT 감시"
+        next_short = "박스 하단 이탈 확인 후"
+        next_long  = "박스 상단 돌파 전 무시"
+    elif direction == "LONG":
+        dir_badge = "LONG 감시"
+        next_short = "박스 하단 이탈 전 무시"
+        next_long  = "박스 상단 돌파 확인 후"
+    else:
+        dir_badge = "방향 대기"
+        next_short = "하단 이탈 확인"
+        next_long  = "상단 돌파 확인"
 
-📊 근거
-15M: {signal.get('trend_15m')}
-1H: {signal.get('trend_1h')}
-RSI: {rsi_value:.2f} → {rsi_text}
-CCI: {cci_value:.2f} → {cci_text}
-MACD: {macd}
-
-⚠️ 제한 요소
-{limitation}
-→ 방향은 {direction}지만 아직 진입 조건은 아님
-
-📌 다음 행동
-숏: {next_short}
-롱: {next_long}
-현재: 대기
-
-※ 진입 알림 아님. 감시 시작 알림.
-"""
+    return (
+        f"🔍 {signal.get('symbol')} · 진입레이더 · 감시구간\n"
+        f"\n"
+        f"⚡ {dir_badge} | 신뢰도 {confidence}%\n"
+        f"   LONG {long_score}% · SHORT {short_score}%\n"
+        f"\n"
+        f"📊 {t15}(15M) · {t1h}(1H)\n"
+        f"   RSI {rsi_value:.1f} {rsi_text} · CCI {cci_value:.0f} {cci_text} · MACD {macd_text}\n"
+        f"\n"
+        f"⚠️ {reason}\n"
+        f"▶ 숏: {next_short}\n"
+        f"✗ 롱: {next_long}\n"
+        f"\n"
+        f"⏳ 대기 중"
+    )
 
 
 def make_pre_entry_message(signal, reason):
