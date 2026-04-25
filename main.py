@@ -587,21 +587,21 @@ def run_entry_radar_on_15m_close(all_candles: dict):
         log("[RADAR] 전송할 신호 없음")
         return
 
-    # ── 이미지 앨범 시도 ─────────────────────
+    # ── 이미지 개별 전송 (풀사이즈) ─────────────
     if chart_renderer is not None:
         try:
-            images = []
-            for sig in signals:
-                sym  = sig.get("symbol", "")
-                c15  = candles_map.get(sym, {}).get("15m", [])
-                png  = chart_renderer.render_radar_card(sig, c15)
-                images.append(png)
-            ok = telegram_send_album(images)
-            if ok:
-                log(f"[RADAR] 앨범 전송 완료 ({len(images)}장)")
-                for sym, atype, res, _ in text_results:
+            all_ok = True
+            for sig, (sym, atype, res, _) in zip(signals, text_results):
+                c15 = candles_map.get(sym, {}).get("15m", [])
+                png = chart_renderer.render_radar_card(sig, c15)
+                ok  = telegram_send_photo(png)
+                if ok:
+                    log(f"[RADAR] {sym} 이미지 전송 완료")
                     record_to_sheet(sym, atype, res)
                     record_to_journal(sym, atype, res)
+                else:
+                    all_ok = False
+            if all_ok:
                 return
         except Exception as e:
             log(f"[RADAR] 이미지 실패 → 텍스트 fallback: {e}")
