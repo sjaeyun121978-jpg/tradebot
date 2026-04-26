@@ -541,11 +541,32 @@ def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
         return
     log(f"[HOURLY DASHBOARD] {symbol} {hour_key}")
     structure_result = run_structure_analysis(symbol, candles_by_tf)
-    msg       = extract_message(structure_result)
-    direction = extract_direction(structure_result)
+    if not structure_result:
+        log(f"[WARN] {symbol} HOURLY_DASHBOARD 결과 없음")
+        last_hourly_dashboard_sent[cache_key] = True
+        return
+
+    # ── 이미지 전송 시도 ────────────────────
+    if chart_renderer is not None:
+        try:
+            candles_1h = candles_by_tf.get("1h", [])
+            png = chart_renderer.render_dashboard_card(structure_result, candles_1h)
+            ok  = telegram_send_photo(png)
+            if ok:
+                log(f"[DASHBOARD] {symbol} 이미지 전송 완료")
+                record_to_sheet(symbol, "HOURLY_DASHBOARD", structure_result)
+                record_to_journal(symbol, "HOURLY_DASHBOARD", structure_result)
+                last_hourly_dashboard_sent[cache_key] = True
+                return
+        except Exception as e:
+            log(f"[DASHBOARD] 이미지 실패 → 텍스트 fallback: {e}")
+            traceback.print_exc()
+
+    # ── 텍스트 fallback ──────────────────────
+    msg = extract_message(structure_result)
     if msg:
         send_alert_safely(symbol=symbol, alert_type="HOURLY_DASHBOARD",
-                          message=msg, direction=direction, force=True)
+                          message=msg, direction=extract_direction(structure_result), force=True)
         record_to_sheet(symbol, "HOURLY_DASHBOARD", structure_result)
         record_to_journal(symbol, "HOURLY_DASHBOARD", structure_result)
     else:
