@@ -150,6 +150,7 @@ def analyze_structure(symbol, candles_by_tf):
         "bias":        _bias_label(sig),
         "confidence":  _confidence_label(sig),
         "message":     message,
+        "image_bytes": None,   # main.py에서 chart_renderer로 채움
         **sig,
     }
 
