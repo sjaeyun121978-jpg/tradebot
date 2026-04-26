@@ -240,6 +240,7 @@ def get_cached_candles(symbol, interval, limit=200):
 def collect_candles(symbol):
     return {
         "15m": get_cached_candles(symbol, "15m", 200),
+        "30m": get_cached_candles(symbol, "30m", 200),
         "1h":  get_cached_candles(symbol, "1h",  200),
         "4h":  get_cached_candles(symbol, "4h",  200),
         "1d":  get_cached_candles(symbol, "1d",  200),
