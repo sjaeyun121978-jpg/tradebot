@@ -489,7 +489,7 @@ def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
     current = now_kst()
 
     # 매 정각 00~09분 사이 1회 발송
-    if current.minute > 9:
+    if current.minute > 20:
         return
 
     hour_key  = current.strftime("%Y-%m-%d %H")
