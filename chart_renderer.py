@@ -1,5 +1,5 @@
 # chart_renderer.py
-# 진입레이더 카드 이미지(PNG) 생성 - 전광판 V3
+# 진입레이더 카드 이미지(PNG) 생성
 
 import io
 import os
@@ -7,8 +7,9 @@ from datetime import datetime, timezone, timedelta
 
 KST = timezone(timedelta(hours=9))
 
+
 # ─────────────────────────────────────────────
-# 폰트 설정 (기존 유지)
+# 한글 폰트 직접 로딩
 # ─────────────────────────────────────────────
 
 def _setup_korean_font():
@@ -21,7 +22,10 @@ def _setup_korean_font():
     font_candidates = [
         "NanumGothic-Regular.ttf",
         "NanumGothic-Bold.ttf",
-        "NanumGothic-ExtraBold.ttf"
+        "NanumGothic-ExtraBold.ttf",
+        "NanumGothic.ttf",
+        "NanumGothicBold.ttf",
+        "NanumGothicExtraBold.ttf",
     ]
 
     for font_name in font_candidates:
@@ -40,21 +44,51 @@ def _setup_korean_font():
 
 _KOREAN_FONT = _setup_korean_font()
 
+
 # ─────────────────────────────────────────────
 # 색상
 # ─────────────────────────────────────────────
 
-BG_DARK = "#0d1117"
-BG_CELL = "#1c2128"
+BG_DARK    = "#0d1117"
+BG_CARD    = "#161b22"
+BG_CELL    = "#1c2128"
+BG_DARK2   = "#21262d"
 TEXT_WHITE = "#e6edf3"
 TEXT_MUTED = "#8b949e"
-RED = "#f85149"
-GREEN = "#3fb950"
-AMBER = "#d29922"
-PURPLE = "#a78bfa"
+RED        = "#f85149"
+GREEN      = "#3fb950"
+AMBER      = "#d29922"
+PURPLE     = "#a78bfa"
+LIME_GREEN = "#4ade80"
+
 
 # ─────────────────────────────────────────────
-# 진입레이더 (전광판 V3)
+# 유틸
+# ─────────────────────────────────────────────
+
+def _safe(v, d=0.0):
+    try:
+        return float(v) if v is not None else d
+    except:
+        return d
+
+
+def _get(sig, *keys, default=None):
+    for k in keys:
+        if k in sig and sig[k] is not None:
+            return sig[k]
+    return default
+
+
+def _split_symbol(sym):
+    sym = str(sym or "")
+    if sym.endswith("USDT"):
+        return sym[:-4], "USDT"
+    return sym[:3], sym[3:] if len(sym) > 3 else ("", "")
+
+
+# ─────────────────────────────────────────────
+# 🔥 핵심 렌더 (최종 안정 버전)
 # ─────────────────────────────────────────────
 
 def render_radar_card(sig: dict, candles_15m: list) -> bytes:
@@ -63,68 +97,64 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle, FancyBboxPatch
 
-    symbol = sig.get("symbol", "UNKNOWN")
-    direction = sig.get("direction", "NEUTRAL")
-    confidence = sig.get("confidence", 0)
-    long_score = sig.get("long_score", 0)
-    short_score = sig.get("short_score", 0)
-    gap = abs(long_score - short_score)
+    symbol      = _get(sig, "symbol", default="UNKNOWN")
+    direction   = _get(sig, "direction", default="WAIT")
+    long_score  = int(_get(sig, "long_score",  default=0))
+    short_score = int(_get(sig, "short_score", default=0))
+    confidence  = int(_get(sig, "confidence",  default=0))
 
-    rsi = sig.get("rsi", 0)
-    cci = sig.get("cci", 0)
-    macd = sig.get("macd_state", "NEUTRAL")
+    rsi_val  = _safe(_get(sig, "rsi", default=50))
+    cci_val  = _safe(_get(sig, "cci", default=0))
+    macd_raw = _get(sig, "macd_state", default="NEUTRAL")
 
-    fig = plt.figure(figsize=(6, 8), facecolor=BG_DARK)
+    support    = _safe(_get(sig, "support", default=0))
+    resistance = _safe(_get(sig, "resistance", default=0))
+
+    ts = _get(sig, "timestamp", default=datetime.now(KST).strftime("%H:%M"))
+
+    fig = plt.figure(figsize=(6, 9), facecolor=BG_DARK)
     ax = fig.add_subplot(111)
     ax.set_facecolor(BG_CELL)
     ax.axis("off")
 
-    # ───── 헤더 ─────
-    ax.text(0.05, 0.92, f"{symbol}", color=TEXT_WHITE, fontsize=16, fontweight="bold")
-    ax.text(0.95, 0.92, "진입레이더", color=PURPLE, fontsize=10, ha="right")
+    base, quote = _split_symbol(symbol)
 
-    # ───── 상태 ─────
-    color = GREEN if direction == "LONG" else RED if direction == "SHORT" else TEXT_MUTED
-    ax.text(0.05, 0.84, f"{direction}", color=color, fontsize=14, fontweight="bold")
+    # ── 헤더
+    ax.text(0.05, 0.92, base, color=GREEN, fontsize=20, fontweight="bold")
+    ax.text(0.25, 0.92, quote, color=TEXT_WHITE, fontsize=14)
 
-    # ───── 신뢰도 ─────
-    ax.text(0.05, 0.78, f"신뢰도 {confidence}%", color=TEXT_WHITE, fontsize=12)
+    ax.text(0.75, 0.92, "진입레이더",
+            color="white",
+            bbox=dict(facecolor=PURPLE, boxstyle="round,pad=0.3"))
 
-    # ───── 점수 ─────
-    ax.text(0.05, 0.70, f"LONG {long_score}%", color=GREEN)
-    ax.text(0.95, 0.70, f"SHORT {short_score}%", color=RED, ha="right")
+    ax.text(0.95, 0.92, ts, color=TEXT_MUTED, ha="right")
 
-    # ───── gap 판단 ─────
-    if gap < 15:
-        strength = "매우 약함"
-    elif gap < 25:
-        strength = "약함"
-    elif gap < 40:
-        strength = "보통"
-    else:
-        strength = "강함"
+    # ── 방향
+    ax.text(0.05, 0.80, direction,
+            color=GREEN if direction=="LONG" else RED,
+            fontsize=18)
 
-    ax.text(0.5, 0.65, f"차이 {gap}% · {strength}", color=TEXT_MUTED, ha="center")
+    ax.text(0.05, 0.74, f"신뢰도 {confidence}%", color=TEXT_WHITE)
 
-    # ───── 지표 ─────
-    ax.text(0.05, 0.55, f"RSI {rsi:.2f}", color=TEXT_WHITE)
-    ax.text(0.05, 0.50, f"CCI {cci:.2f}", color=TEXT_WHITE)
-    ax.text(0.05, 0.45, f"MACD {macd}", color=TEXT_WHITE)
+    # ── 점수
+    ax.text(0.05, 0.65, f"LONG {long_score}%", color=GREEN)
+    ax.text(0.80, 0.65, f"SHORT {short_score}%", color=RED)
 
-    # ───── 판단 ─────
+    gap = abs(long_score - short_score)
+    ax.text(0.40, 0.60, f"차이 {gap}%", color=TEXT_MUTED)
+
+    # ── 지표
+    ax.text(0.05, 0.50, f"RSI {rsi_val:.2f}", color=TEXT_WHITE)
+    ax.text(0.05, 0.45, f"CCI {cci_val:.2f}", color=TEXT_WHITE)
+    ax.text(0.05, 0.40, f"MACD {macd_raw}", color=TEXT_WHITE)
+
+    # ── 상태
     if confidence < 60:
-        msg = "조건 미충족 · 대기"
-        msg_color = AMBER
+        ax.text(0.05, 0.30, "조건 미충족 · 대기", color=AMBER)
     else:
-        msg = "진입 가능 구간"
-        msg_color = GREEN if direction == "LONG" else RED
-
-    ax.text(0.05, 0.35, msg, color=msg_color, fontsize=12, fontweight="bold")
-
-    # ───── footer ─────
-    now = datetime.now(KST).strftime("%H:%M")
-    ax.text(0.95, 0.05, now, color=TEXT_MUTED, ha="right", fontsize=9)
+        ax.text(0.05, 0.30, "진입 가능 구간", color=GREEN)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, facecolor=BG_DARK)
