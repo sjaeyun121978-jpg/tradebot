@@ -326,11 +326,11 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     vol_txt_c = GREEN if vol_ok else RED
 
     # ── Figure ───────────────────────────────
-    fig = plt.figure(figsize=(6, 10.5), facecolor=BG_DARK)
+    fig = plt.figure(figsize=(6, 13.0), facecolor=BG_DARK)
     fig.patch.set_facecolor(BG_DARK)
     gs = fig.add_gridspec(6, 1,
-        height_ratios=[0.55, 0.55, 2.8, 0.28, 1.05, 1.55],
-        hspace=0.06, left=0.03, right=0.97, top=0.97, bottom=0.02)
+        height_ratios=[0.5, 0.55, 2.8, 0.3, 1.2, 2.0],
+        hspace=0.07, left=0.03, right=0.97, top=0.97, bottom=0.02)
 
     # ── 행0: 헤더 ────────────────────────────
     ax = fig.add_subplot(gs[0])
@@ -441,31 +441,41 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     # 시간봉 패널
     ax.add_patch(FancyBboxPatch((0.0,0.0),0.455,0.99,boxstyle="round,pad=0.01",
         facecolor=BG_CELL,edgecolor="#21262d",linewidth=0.5,transform=ax.transAxes))
-    ax.text(0.02,0.95,"시간봉 구조",color=TEXT_MUTED,fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
-    ax.text(0.03,0.77,"15M · 단기",color=TEXT_MUTED,fontsize=8,va="top",transform=ax.transAxes)
-    ax.text(0.03,0.62,t15_txt,    color=t15_c,    fontsize=12,fontweight="bold",va="top",transform=ax.transAxes)
-    ax.text(0.03,0.50,t15_desc,   color=TEXT_MUTED,fontsize=8,va="top",transform=ax.transAxes)
-    ax.axhline(0.46, xmin=0.0, xmax=0.455, color="#21262d", linewidth=0.5)
-    ax.text(0.03,0.43,"1H · 중기",color=TEXT_MUTED,fontsize=8,va="top",transform=ax.transAxes)
-    ax.text(0.03,0.28,t1h_txt,    color=t1h_c,    fontsize=12,fontweight="bold",va="top",transform=ax.transAxes)
-    ax.text(0.03,0.16,t1h_desc,   color=TEXT_MUTED,fontsize=8,va="top",transform=ax.transAxes)
-    ax.text(0.03,0.06,tf_summary, color=tf_sum_c, fontsize=7.5,va="bottom",transform=ax.transAxes)
+    ax.text(0.03,0.97,"시간봉 구조",color=TEXT_MUTED,fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
+    # 15M
+    ax.text(0.03,0.89,"15M · 단기",color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+    ax.text(0.03,0.79,t15_txt,    color=t15_c,     fontsize=13,fontweight="bold",va="top",transform=ax.transAxes)
+    ax.text(0.03,0.69,t15_desc,   color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+    # 구분선
+    ax.add_patch(Rectangle((0.03,0.635),0.415,0.005,facecolor="#21262d",transform=ax.transAxes))
+    # 1H
+    ax.text(0.03,0.62,"1H · 중기", color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+    ax.text(0.03,0.52,t1h_txt,     color=t1h_c,    fontsize=13,fontweight="bold",va="top",transform=ax.transAxes)
+    ax.text(0.03,0.42,t1h_desc,    color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+    # 구분선
+    ax.add_patch(Rectangle((0.03,0.365),0.415,0.005,facecolor="#21262d",transform=ax.transAxes))
+    # 종합
+    ax.text(0.03,0.34,"종합",      color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+    ax.text(0.03,0.24,tf_summary,  color=tf_sum_c, fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
+
     # 지표 패널
     ax.add_patch(FancyBboxPatch((0.47,0.0),0.53,0.99,boxstyle="round,pad=0.01",
         facecolor=BG_CELL,edgecolor="#21262d",linewidth=0.5,transform=ax.transAxes))
-    ax.text(0.49,0.95,"지표 분석",color=TEXT_MUTED,fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
+    ax.text(0.49,0.97,"지표 분석",color=TEXT_MUTED,fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
     for idx,(lbl,val,desc,col) in enumerate([
-        ("RSI",  f"{rsi_val:.1f}", rsi_txt,  rsi_c),
-        ("CCI",  f"{cci_val:.0f}", cci_txt,  cci_c),
-        ("MACD", macd_str,         macd_desc, macd_c),
+        ("RSI",  f"{rsi_val:.1f}", rsi_txt,   rsi_c),
+        ("CCI",  f"{cci_val:.0f}", cci_txt,   cci_c),
+        ("MACD", macd_str,         macd_desc,  macd_c),
     ]):
-        yt = 0.77 - idx*0.26
-        ax.text(0.49,yt,       lbl,  color=TEXT_MUTED,fontsize=8,  va="top",transform=ax.transAxes)
-        ax.text(0.49,yt-0.10,  val,  color=col,       fontsize=10, fontweight="bold",va="top",transform=ax.transAxes)
-        ax.text(0.49,yt-0.19,  desc, color=TEXT_MUTED,fontsize=7.5,va="top",transform=ax.transAxes)
+        yt = 0.87 - idx * 0.29
+        ax.text(0.49, yt,       lbl,  color=TEXT_MUTED, fontsize=7.5, va="top", transform=ax.transAxes)
+        ax.text(0.49, yt-0.09,  val,  color=col,        fontsize=11,  fontweight="bold", va="top", transform=ax.transAxes)
+        ax.text(0.49, yt-0.18,  desc, color=TEXT_MUTED, fontsize=7.5, va="top", transform=ax.transAxes)
     if conflict:
-        ax.text(0.49,0.06,"지표 충돌 — 손절 확률 상승\n이탈 후 일치 확인 필수",
-                color=AMBER,fontsize=7.5,va="bottom",transform=ax.transAxes)
+        ax.add_patch(FancyBboxPatch((0.47,0.0),0.53,0.17,boxstyle="round,pad=0.01",
+            facecolor="#1a1200",edgecolor="#d29922",linewidth=0.5,transform=ax.transAxes))
+        ax.text(0.49,0.15,"지표 충돌",color=AMBER,fontsize=8,fontweight="bold",va="top",transform=ax.transAxes)
+        ax.text(0.49,0.07,"손절 확률 상승 · 이탈 후 일치 확인",color=AMBER,fontsize=7,va="top",transform=ax.transAxes)
     if div:
         ax.text(0.49,0.01,_DIV_KO.get(div,div),
                 color=GREEN if div=="BULLISH_DIV" else RED,fontsize=7.5,va="bottom",transform=ax.transAxes)
