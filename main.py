@@ -487,20 +487,35 @@ def record_to_journal(symbol, event_type, payload):
 
 def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
     current = now_kst()
-    if current.minute > 4: return
+
+    # 매 정각 00~09분 사이 1회 발송
+    if current.minute > 9:
+        return
+
     hour_key  = current.strftime("%Y-%m-%d %H")
     cache_key = f"{symbol}:{hour_key}"
-    if last_hourly_dashboard_sent.get(cache_key): return
+
+    if last_hourly_dashboard_sent.get(cache_key):
+        return
+
     log(f"[HOURLY DASHBOARD] {symbol} {hour_key}")
+
     structure_result = run_structure_analysis(symbol, candles_by_tf)
     msg = extract_message(structure_result)
+
     if msg:
-        send_alert_safely(symbol=symbol, alert_type="HOURLY_DASHBOARD",
-                          message=msg, direction=extract_direction(structure_result), force=True)
+        send_alert_safely(
+            symbol=symbol,
+            alert_type="HOURLY_DASHBOARD",
+            message=msg,
+            direction=extract_direction(structure_result),
+            force=True,
+        )
         record_to_sheet(symbol, "HOURLY_DASHBOARD", structure_result)
         record_to_journal(symbol, "HOURLY_DASHBOARD", structure_result)
     else:
         log(f"[WARN] {symbol} HOURLY_DASHBOARD 메시지 없음")
+
     last_hourly_dashboard_sent[cache_key] = True
 
 
