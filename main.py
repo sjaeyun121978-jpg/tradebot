@@ -488,7 +488,7 @@ def record_to_journal(symbol, event_type, payload):
 def run_hourly_dashboard_if_needed(symbol, candles_by_tf):
     current = now_kst()
 
-    # 매 정각 00~09분 사이 1회 발송
+    # 매 정각 00~20분 사이 1회 발송
     if current.minute > 20:
         return
 
