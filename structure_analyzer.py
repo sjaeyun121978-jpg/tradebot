@@ -6,7 +6,7 @@
 # ─────────────────────────────────────────────
 
 from datetime import datetime, timezone, timedelta
-from core_analyzer import analyze, now_kst
+from core_analyzer import analyze as _core_analyze, now_kst
 
 KST = timezone(timedelta(hours=9))
 
@@ -130,7 +130,7 @@ LONG {sig['long_score']}% · SHORT {sig['short_score']}%
 # ─────────────────────────────────────────────
 
 def analyze_structure(symbol, candles_by_tf):
-    sig = analyze(symbol, candles_by_tf)
+    sig = _core_analyze(symbol, candles_by_tf)
 
     if not sig.get("current_price"):
         return {
