@@ -1,5 +1,4 @@
-from tradebot.scheduler.jobs import main_loop
-
+from tradebot.scheduler.jobs import run
 
 if __name__ == "__main__":
-    main_loop()
+    run()
