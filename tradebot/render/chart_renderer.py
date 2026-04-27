@@ -284,9 +284,9 @@ def _draw_chart(ax, candles, sig, chart_tf="15M"):
 
     ylo = min(min(lows), support, price, middle)
     yhi = max(max(highs), resistance, price, middle)
-    pad = (yhi - ylo) * 0.18 if yhi != ylo else price * 0.01
+    pad = (yhi - ylo) * 0.26 if yhi != ylo else price * 0.012
     ax.set_ylim(ylo - pad, yhi + pad)
-    ax.set_xlim(-1.0, len(rows) + 5.2)
+    ax.set_xlim(-1.0, len(rows) + 6.4)
 
     # 박스 기준선
     ax.axhline(resistance, color=RED, linestyle=(0, (5, 5)), linewidth=1.25, alpha=0.70, zorder=1)
@@ -319,21 +319,15 @@ def _draw_chart(ax, candles, sig, chart_tf="15M"):
     ax.scatter([len(rows) - 1], [price], color=WHITE, s=18, zorder=6)
 
     # 우측 라벨
-    lx = len(rows) + 0.6
+    lx = len(rows) + 0.95
     ax.text(lx, resistance, f"박스상단 {_fmt(resistance)}", color=RED,
             fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
     ax.text(lx, middle, f"중앙 {_fmt(middle)}", color=AMBER,
             fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
-    ax.text(lx + 2.3, price, _fmt(price), color=WHITE,
+    ax.text(lx + 3.25, price, _fmt(price), color=WHITE,
             fontsize=12.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
     ax.text(lx, support, f"박스하단 {_fmt(support)}", color=GREEN,
             fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
-
-    # 차트 내부 헤더
-    ax.text(0.025, 0.94, f"{chart_tf} 캔들차트", transform=ax.transAxes,
-            color=TEXT, fontsize=18, va="top", ha="left", fontweight="bold", fontproperties=FONT_PROP)
-    ax.text(0.965, 0.94, "— EMA20", transform=ax.transAxes,
-            color=AMBER, fontsize=15, va="top", ha="right", fontweight="bold", fontproperties=FONT_PROP)
 
     # 축 스타일
     ax.yaxis.tick_right()
@@ -512,21 +506,24 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
     HR(0.875, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
 
-    # ── Signal status: 오른쪽 예시처럼 WAIT + 사유 + 비율바
-    STATUS_Y = 0.830
-    RECT(0.055, STATUS_Y - 0.027, 0.135, 0.048, face=badge_bg, edge=badge_color, lw=1.4, r=0.012)
-    T(0.122, STATUS_Y - 0.002, badge_txt, size=18, color=badge_color, weight="bold", ha="center")
-    T(0.220, STATUS_Y, reason_text, size=17, color=MUTED, weight="bold")
+    # ── Signal status: 겹침 방지용 3행 구조
+    # 1행: 방향 배지 + 사유
+    STATUS_Y = 0.835
+    RECT(0.055, STATUS_Y - 0.026, 0.135, 0.046, face=badge_bg, edge=badge_color, lw=1.4, r=0.012)
+    T(0.122, STATUS_Y - 0.002, badge_txt, size=16.5, color=badge_color, weight="bold", ha="center")
+    T(0.220, STATUS_Y, reason_text, size=15.2, color=MUTED, weight="bold")
 
-    SCORE_Y = 0.770
-    T(0.055, SCORE_Y + 0.027, f"LONG {long_score:.0f}%", size=18, color=GREEN, weight="bold")
-    T(0.500, SCORE_Y + 0.027, "신호강도", size=17, color=MUTED, weight="bold", ha="center")
-    T(0.945, SCORE_Y + 0.027, f"SHORT {short_score:.0f}%", size=18, color=RED, weight="bold", ha="right")
+    # 2행: LONG/신호강도/SHORT 라벨
+    SCORE_Y = 0.786
+    T(0.055, SCORE_Y, f"LONG {long_score:.0f}%", size=15.8, color=GREEN, weight="bold", va="bottom")
+    T(0.500, SCORE_Y, "신호강도", size=15.2, color=MUTED, weight="bold", ha="center", va="bottom")
+    T(0.945, SCORE_Y, f"SHORT {short_score:.0f}%", size=15.8, color=RED, weight="bold", ha="right", va="bottom")
 
+    # 3행: 강도 바
     BAR_X = 0.055
     BAR_W = 0.890
-    BAR_H = 0.029
-    BAR_Y = SCORE_Y - 0.010
+    BAR_H = 0.026
+    BAR_Y = 0.752
     RECT(BAR_X, BAR_Y, BAR_W, BAR_H, face=GRAY_BAR, edge=GRAY_BAR, lw=0, r=0.014)
     ax.add_patch(FancyBboxPatch(
         (BAR_X, BAR_Y), BAR_W * long_ratio, BAR_H,
@@ -539,28 +536,34 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
         linewidth=0, facecolor=RED, transform=ax.transAxes, clip_on=False,
     ))
 
-    HR(0.725, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
+    HR(0.715, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
 
     # ── Chart card: 둥근 패널 + 내부 차트
     CHART_CARD_X = 0.055
-    CHART_CARD_Y = 0.405
+    CHART_CARD_Y = 0.398
     CHART_CARD_W = 0.890
-    CHART_CARD_H = 0.285
+    CHART_CARD_H = 0.300
     RECT(CHART_CARD_X, CHART_CARD_Y, CHART_CARD_W, CHART_CARD_H,
          face=PANEL, edge="#1e2530", lw=1.1, r=0.020)
 
+    # 차트 헤더는 axes 밖에 배치해 가격 라벨과 겹치지 않게 한다.
+    T(CHART_CARD_X + 0.035, CHART_CARD_Y + CHART_CARD_H - 0.035, f"{chart_tf} 캔들차트",
+      size=16.5, color=TEXT, weight="bold")
+    T(CHART_CARD_X + CHART_CARD_W - 0.035, CHART_CARD_Y + CHART_CARD_H - 0.035, "— EMA20",
+      size=14.5, color=AMBER, weight="bold", ha="right")
+
     chart_ax = fig.add_axes([
         CHART_CARD_X + 0.028,
-        CHART_CARD_Y + 0.060,
+        CHART_CARD_Y + 0.078,
         CHART_CARD_W - 0.056,
-        CHART_CARD_H - 0.085,
+        CHART_CARD_H - 0.130,
     ])
     _draw_chart(chart_ax, candles_15m, sig, chart_tf=chart_tf)
 
     # 차트 하단 박스 설명
-    DOT(CHART_CARD_X + 0.038, CHART_CARD_Y + 0.038, r=0.010, color=bullet_color)
-    T(CHART_CARD_X + 0.065, CHART_CARD_Y + 0.038, bullet_title, size=18, color=bullet_color, weight="bold")
-    T(CHART_CARD_X + 0.205, CHART_CARD_Y + 0.038, bullet_text, size=17, color=TEXT)
+    DOT(CHART_CARD_X + 0.038, CHART_CARD_Y + 0.040, r=0.010, color=bullet_color)
+    T(CHART_CARD_X + 0.065, CHART_CARD_Y + 0.040, bullet_title, size=16.5, color=bullet_color, weight="bold")
+    T(CHART_CARD_X + 0.190, CHART_CARD_Y + 0.040, bullet_text, size=15.2, color=TEXT)
 
     # ── Timeframe
     TF_TOP = 0.355
