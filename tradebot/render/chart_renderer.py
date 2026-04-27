@@ -195,7 +195,7 @@ def _entry_label(direction, is_range=False, range_pos=None, long_score=0, short_
 def _reason_text(sig):
     reason = _get(sig, "reason", "message", "summary", default=None)
     if reason:
-        return str(reason)[:34]
+        return str(reason).replace("·", "/")[:28]
 
     is_range = _get(sig, "is_range", default=False)
     range_pos = _get(sig, "range_pos", default=None)
@@ -204,16 +204,16 @@ def _reason_text(sig):
     trend_4h = _get(sig, "trend_4h", default="SIDEWAYS")
 
     if is_range and range_pos == "MIDDLE":
-        return "박스 중앙 · 타임프레임 충돌 · 거래량 약함"
+        return "박스 중앙 / 타임프레임 충돌 / 거래량 약함"
     if is_range and range_pos == "TOP":
-        return "박스 상단 근접 · 저항 돌파 확인 필요"
+        return "박스 상단 근접 / 저항 돌파 확인 필요"
     if is_range and range_pos == "BOTTOM":
-        return "박스 하단 근접 · 지지 이탈 확인 필요"
+        return "박스 하단 근접 / 지지 이탈 확인 필요"
     if bb_squeeze:
-        return "변동성 수축 · 방향 확정 대기"
+        return "변동성 수축 / 방향 확정 대기"
     if trend_1h != trend_4h:
-        return "타임프레임 혼재 · 상위봉 우선 확인"
-    return "방향 확인 중 · 거래량 확인 필요"
+        return "타임프레임 혼재 / 상위봉 우선 확인"
+    return "방향 확인 중 / 거래량 확인 필요"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -508,35 +508,36 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
     # ── Signal status: 겹침 방지용 3행 구조
     # 1행: 방향 배지 + 사유
-    STATUS_Y = 0.835
+    STATUS_Y = 0.842
     RECT(0.055, STATUS_Y - 0.026, 0.135, 0.046, face=badge_bg, edge=badge_color, lw=1.4, r=0.012)
     T(0.122, STATUS_Y - 0.002, badge_txt, size=16.5, color=badge_color, weight="bold", ha="center")
-    T(0.220, STATUS_Y, reason_text, size=15.2, color=MUTED, weight="bold")
+    T(0.220, STATUS_Y, reason_text, size=14.2, color=MUTED, weight="bold")
 
     # 2행: LONG/신호강도/SHORT 라벨
-    SCORE_Y = 0.786
-    T(0.055, SCORE_Y, f"LONG {long_score:.0f}%", size=15.8, color=GREEN, weight="bold", va="bottom")
-    T(0.500, SCORE_Y, "신호강도", size=15.2, color=MUTED, weight="bold", ha="center", va="bottom")
-    T(0.945, SCORE_Y, f"SHORT {short_score:.0f}%", size=15.8, color=RED, weight="bold", ha="right", va="bottom")
+    SCORE_Y = 0.775
+    T(0.055, SCORE_Y, f"LONG {long_score:.0f}%", size=14.2, color=GREEN, weight="bold", va="bottom")
+    T(0.500, SCORE_Y, "신호강도", size=13.8, color=MUTED, weight="bold", ha="center", va="bottom")
+    T(0.945, SCORE_Y, f"SHORT {short_score:.0f}%", size=14.2, color=RED, weight="bold", ha="right", va="bottom")
 
     # 3행: 강도 바
     BAR_X = 0.055
     BAR_W = 0.890
-    BAR_H = 0.026
-    BAR_Y = 0.752
-    RECT(BAR_X, BAR_Y, BAR_W, BAR_H, face=GRAY_BAR, edge=GRAY_BAR, lw=0, r=0.014)
+    BAR_H = 0.013
+    BAR_Y = 0.742
+    RECT(BAR_X, BAR_Y, BAR_W, BAR_H, face=GRAY_BAR, edge=GRAY_BAR, lw=0, r=0.007)
     ax.add_patch(FancyBboxPatch(
         (BAR_X, BAR_Y), BAR_W * long_ratio, BAR_H,
-        boxstyle="round,pad=0.002,rounding_size=0.014",
+        boxstyle="round,pad=0.002,rounding_size=0.007",
         linewidth=0, facecolor=GREEN, transform=ax.transAxes, clip_on=False,
     ))
-    ax.add_patch(FancyBboxPatch(
-        (BAR_X + BAR_W * (1 - short_ratio), BAR_Y), BAR_W * short_ratio, BAR_H,
-        boxstyle="round,pad=0.002,rounding_size=0.014",
-        linewidth=0, facecolor=RED, transform=ax.transAxes, clip_on=False,
-    ))
+    if short_ratio >= 0.015:
+        ax.add_patch(FancyBboxPatch(
+            (BAR_X + BAR_W * (1 - short_ratio), BAR_Y), BAR_W * short_ratio, BAR_H,
+            boxstyle="round,pad=0.002,rounding_size=0.007",
+            linewidth=0, facecolor=RED, transform=ax.transAxes, clip_on=False,
+        ))
 
-    HR(0.715, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
+    HR(0.708, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
 
     # ── Chart card: 둥근 패널 + 내부 차트
     CHART_CARD_X = 0.055
