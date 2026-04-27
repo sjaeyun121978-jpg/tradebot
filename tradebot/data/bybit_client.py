@@ -475,6 +475,6 @@ def collect_market_data(symbol: str) -> dict:
         "trades":           _safe(get_recent_trades),
         "open_interest":    _safe(get_open_interest),
         "funding_rate":     _safe(get_funding_rate),
-        "liquidations":     _safe(get_liquidations),
+        "liquidations":     _empty_liq(),
         "long_short_ratio": _safe(get_long_short_ratio),
     }
