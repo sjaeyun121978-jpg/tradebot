@@ -289,7 +289,7 @@ def find_key_levels(candles, lookback=50):
 # 점수 계산 (단일 로직 — 모든 메시지 공유)
 # ─────────────────────────────────────────────
 
-def calc_scores(candles_15m, candles_1h, candles_4h, candles_1d):
+def calc_scores(candles_15m, candles_1h, candles_4h, candles_1d, market_data=None):
     closes  = [get_close(c) for c in candles_15m]
     volumes = [get_volume(c) for c in candles_15m]
     price   = closes[-1] if closes else 0.0
