@@ -192,10 +192,51 @@ def _entry_label(direction, is_range=False, range_pos=None, long_score=0, short_
     return "WAIT", AMBER, AMBER_DARK
 
 
+
+def _compact_reason_text(text, max_len=24):
+    """상단 사유 문구 전용 보정.
+    - 잘린 괄호 자동 보정
+    - 너무 긴 괄호형 상세 문구는 카드 폭에 맞게 축약
+    """
+    t = str(text or "").replace("·", "/").strip()
+    while "  " in t:
+        t = t.replace("  ", " ")
+
+    if t.count("(") > t.count(")"):
+        t += ")"
+
+    if len(t) <= max_len:
+        return t
+
+    normalized = (
+        t.replace("(", " / ")
+         .replace(")", "")
+         .replace(":", " / ")
+         .replace("<", " ")
+         .replace(">", " ")
+    )
+    parts = [x.strip() for x in normalized.split("/") if x.strip()]
+
+    if parts:
+        out = parts[0]
+        for part in parts[1:]:
+            candidate = f"{out} / {part}"
+            if len(candidate) <= max_len:
+                out = candidate
+            else:
+                break
+        if out:
+            return out
+
+    cut = t[:max_len].rstrip()
+    if " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip("(/: ")
+
 def _reason_text(sig):
     reason = _get(sig, "reason", "message", "summary", default=None)
     if reason:
-        return str(reason).replace("·", "/")[:28]
+        return _compact_reason_text(reason, max_len=24)
 
     is_range = _get(sig, "is_range", default=False)
     range_pos = _get(sig, "range_pos", default=None)
@@ -443,7 +484,7 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     cci_state = "상승압력" if cci >= 100 else ("하락압력" if cci <= -100 else ("약세" if cci < 0 else "강세"))
 
     # 모바일 텔레그램에서 읽기 쉬운 세로형 카드
-    FIG_W, FIG_H = 7.6, 12.8
+    FIG_W, FIG_H = 7.6, 11.6
     DPI = 160
 
     fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, facecolor=BG)
@@ -511,7 +552,7 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     STATUS_Y = 0.842
     RECT(0.055, STATUS_Y - 0.026, 0.135, 0.046, face=badge_bg, edge=badge_color, lw=1.4, r=0.012)
     T(0.122, STATUS_Y - 0.002, badge_txt, size=16.5, color=badge_color, weight="bold", ha="center")
-    T(0.220, STATUS_Y, reason_text, size=14.2, color=MUTED, weight="bold")
+    T(0.220, STATUS_Y, reason_text, size=13.2, color=MUTED, weight="bold")
 
     # 2행: LONG/신호강도/SHORT 라벨
     SCORE_Y = 0.775
