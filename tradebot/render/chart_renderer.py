@@ -1,5 +1,9 @@
 # chart_renderer.py
-# 진입레이더 카드 이미지(PNG) 생성 — Image 2 디자인 기준
+# Telegram Trading Bot - Radar/Dashboard card renderer
+# 목적:
+# - 진입레이더 차트 상단과 차트 영역을 카드형 UI로 개선
+# - 기존 호출부(render_radar_card, render_dashboard_card, send_radar_album, send_single_radar) 호환 유지
+# - 한글 폰트 포함 환경과 Railway 환경 모두 대응
 
 import io
 import os
@@ -14,7 +18,9 @@ import matplotlib.font_manager as fm
 KST = timezone(timedelta(hours=9))
 
 
-# ─── 폰트 셋업 ───────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 폰트 셋업
+# ─────────────────────────────────────────────────────────────
 
 def _setup_korean_font():
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -63,23 +69,35 @@ def now_kst():
     return datetime.now(KST)
 
 
-# ─── 팔레트 ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 팔레트
+# ─────────────────────────────────────────────────────────────
 
-BG = "#111318"
-PANEL = "#1a1d24"
-BORDER = "#2a2d36"
-GREEN = "#2ecc71"
-RED = "#e74c3c"
-AMBER = "#f39c12"
-PURPLE = "#9b59b6"
-GRAY_BULL = "#95a5a6"
-WHITE = "#e8ecf0"
-MUTED = "#8a8f9e"
-DIM = "#555a6a"
-RSI_OVER = "#e74c3c"
+BG = "#0f1118"
+BG2 = "#11151e"
+PANEL = "#171c25"
+PANEL2 = "#1a202a"
+PANEL3 = "#202632"
+BORDER = "#2a303b"
+GRID = "#2a3038"
+WHITE = "#f1f3f5"
+TEXT = "#d5d8de"
+MUTED = "#9da3ad"
+DIM = "#626a76"
+GREEN = "#28d36f"
+GREEN_DARK = "#12391f"
+RED = "#ff4b43"
+RED_DARK = "#3a1718"
+AMBER = "#f0ae2d"
+AMBER_DARK = "#3a2b0f"
+PURPLE = "#a681ff"
+BLUE = "#4da3ff"
+GRAY_BAR = "#252c33"
 
 
-# ─── 공통 유틸 ───────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 공통 유틸
+# ─────────────────────────────────────────────────────────────
 
 def _safe(v, d=0.0):
     try:
@@ -97,11 +115,22 @@ def _get(sig, *keys, default=None):
 
 def _fmt(v):
     v = _safe(v)
-    if v >= 1000:
+    if abs(v) >= 1000:
         return f"{v:,.0f}"
-    if v >= 10:
-        return f"{v:.2f}"
-    return f"{v:.4f}"
+    if abs(v) >= 10:
+        return f"{v:,.2f}"
+    return f"{v:,.4f}"
+
+
+def _fmt_price(v):
+    v = _safe(v)
+    if abs(v) >= 1000:
+        return f"{v:,.2f}"
+    if abs(v) >= 100:
+        return f"{v:,.2f}"
+    if abs(v) >= 10:
+        return f"{v:,.3f}"
+    return f"{v:,.4f}"
 
 
 def _split_symbol(sym):
@@ -118,7 +147,8 @@ def _ema(values, period=20):
     if not vals:
         return []
     k = 2 / (period + 1)
-    e, out = vals[0], []
+    e = vals[0]
+    out = []
     for v in vals:
         e = v * k + e * (1 - k)
         out.append(e)
@@ -131,7 +161,16 @@ def _trend_color(v):
         return GREEN
     if t == "DOWN":
         return RED
-    return GRAY_BULL
+    return MUTED
+
+
+def _trend_ko(v):
+    t = str(v or "").upper()
+    if t == "UP":
+        return "상승"
+    if t == "DOWN":
+        return "하락"
+    return "횡보"
 
 
 def _macd_ko(v):
@@ -144,33 +183,78 @@ def _macd_ko(v):
     }.get(str(v or "NEUTRAL").upper(), ("중립", MUTED, "방향미확정"))
 
 
-# ─── 캔들 정규화 ─────────────────────────────────────────
+def _entry_label(direction, is_range=False, range_pos=None, long_score=0, short_score=0):
+    direction = str(direction or "WAIT").upper()
+    if direction == "LONG":
+        return "LONG", GREEN, GREEN_DARK
+    if direction == "SHORT":
+        return "SHORT", RED, RED_DARK
+    return "WAIT", AMBER, AMBER_DARK
 
-def _norm_candles(candles, n=40):
+
+def _reason_text(sig):
+    reason = _get(sig, "reason", "message", "summary", default=None)
+    if reason:
+        return str(reason)[:34]
+
+    is_range = _get(sig, "is_range", default=False)
+    range_pos = _get(sig, "range_pos", default=None)
+    bb_squeeze = _get(sig, "bb_squeeze", default=False)
+    trend_1h = _get(sig, "trend_1h", default="SIDEWAYS")
+    trend_4h = _get(sig, "trend_4h", default="SIDEWAYS")
+
+    if is_range and range_pos == "MIDDLE":
+        return "박스 중앙 · 타임프레임 충돌 · 거래량 약함"
+    if is_range and range_pos == "TOP":
+        return "박스 상단 근접 · 저항 돌파 확인 필요"
+    if is_range and range_pos == "BOTTOM":
+        return "박스 하단 근접 · 지지 이탈 확인 필요"
+    if bb_squeeze:
+        return "변동성 수축 · 방향 확정 대기"
+    if trend_1h != trend_4h:
+        return "타임프레임 혼재 · 상위봉 우선 확인"
+    return "방향 확인 중 · 거래량 확인 필요"
+
+
+# ─────────────────────────────────────────────────────────────
+# 캔들 정규화
+# ─────────────────────────────────────────────────────────────
+
+def _norm_candles(candles, n=34):
     rows = []
     for c in (candles or [])[-n:]:
-        if not isinstance(c, dict):
+        if isinstance(c, dict):
+            o = _safe(c.get("open"))
+            h = _safe(c.get("high"))
+            l = _safe(c.get("low"))
+            cl = _safe(c.get("close"))
+        elif isinstance(c, (list, tuple)) and len(c) >= 5:
+            # Bybit raw list 호환: [time, open, high, low, close, volume, ...]
+            o = _safe(c[1])
+            h = _safe(c[2])
+            l = _safe(c[3])
+            cl = _safe(c[4])
+        else:
             continue
-        o = _safe(c.get("open"))
-        h = _safe(c.get("high"))
-        l = _safe(c.get("low"))
-        cl = _safe(c.get("close"))
+
         if h > 0 and l > 0 and cl > 0:
             rows.append({"open": o, "high": h, "low": l, "close": cl})
     return rows
 
 
-# ─── 캔들차트 axes ────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 차트 영역
+# ─────────────────────────────────────────────────────────────
 
-def _draw_chart(ax, candles, sig):
+def _draw_chart(ax, candles, sig, chart_tf="15M"):
     import numpy as np
     from matplotlib.patches import Rectangle
 
     ax.set_facecolor(PANEL)
     for spine in ax.spines.values():
-        spine.set_color(BORDER)
+        spine.set_visible(False)
 
-    rows = _norm_candles(candles, 40)
+    rows = _norm_candles(candles, 34)
     if len(rows) < 3:
         ax.text(
             0.5,
@@ -180,7 +264,7 @@ def _draw_chart(ax, candles, sig):
             color=MUTED,
             ha="center",
             va="center",
-            fontsize=11,
+            fontsize=18,
             fontproperties=FONT_PROP,
         )
         ax.set_xticks([])
@@ -193,60 +277,76 @@ def _draw_chart(ax, candles, sig):
     closes = [r["close"] for r in rows]
     x = np.arange(len(rows))
 
-    price = _safe(_get(sig, "current_price", default=closes[-1]), closes[-1])
+    price = _safe(_get(sig, "current_price", "price", default=closes[-1]), closes[-1])
     support = _safe(_get(sig, "support", "range_low", default=min(lows)), min(lows))
     resistance = _safe(_get(sig, "resistance", "range_high", default=max(highs)), max(highs))
+    middle = (support + resistance) / 2 if support and resistance else price
 
-    ylo = min(min(lows), support, price)
-    yhi = max(max(highs), resistance, price)
-    pad = (yhi - ylo) * 0.10 if yhi != ylo else price * 0.005
+    ylo = min(min(lows), support, price, middle)
+    yhi = max(max(highs), resistance, price, middle)
+    pad = (yhi - ylo) * 0.18 if yhi != ylo else price * 0.01
     ax.set_ylim(ylo - pad, yhi + pad)
-    ax.set_xlim(-0.8, len(rows) - 0.2)
+    ax.set_xlim(-1.0, len(rows) + 5.2)
 
-    ax.axhline(resistance, color=RED, linestyle="--", linewidth=1.0, alpha=0.7, zorder=1)
-    ax.axhline(support, color=GREEN, linestyle="--", linewidth=1.0, alpha=0.7, zorder=1)
+    # 박스 기준선
+    ax.axhline(resistance, color=RED, linestyle=(0, (5, 5)), linewidth=1.25, alpha=0.70, zorder=1)
+    ax.axhline(middle, color=AMBER, linestyle=(0, (1.5, 5)), linewidth=1.05, alpha=0.55, zorder=1)
+    ax.axhline(support, color=GREEN, linestyle=(0, (5, 5)), linewidth=1.05, alpha=0.55, zorder=1)
 
-    w = 0.55
+    # 캔들
+    w = 0.56
     for i, r in enumerate(rows):
         o, h, l, c = r["open"], r["high"], r["low"], r["close"]
         col = GREEN if c >= o else RED
-        ax.vlines(i, l, h, color=col, linewidth=0.9, alpha=0.95, zorder=2)
-        bh = max(abs(c - o), (yhi - ylo) * 0.001)
+        ax.vlines(i, l, h, color=col, linewidth=1.4, alpha=0.95, zorder=3)
+        body_h = max(abs(c - o), (yhi - ylo) * 0.002)
         ax.add_patch(Rectangle(
             (i - w / 2, min(o, c)),
             w,
-            bh,
+            body_h,
             facecolor=col,
             edgecolor=col,
-            linewidth=0.5,
-            zorder=2,
+            linewidth=0.7,
+            zorder=4,
         ))
 
+    # EMA20
     ema20 = _ema(closes, 20)
-    ax.plot(x, ema20, color=AMBER, linewidth=1.8, alpha=0.95, zorder=3)
+    ax.plot(x, ema20, color=AMBER, linewidth=2.3, alpha=0.95, zorder=5)
 
-    ax.scatter([len(rows) - 1], [price], color=AMBER, s=28, zorder=5)
+    # 현재가 점선과 마커
+    ax.axhline(price, color=WHITE, linestyle=(0, (2, 6)), linewidth=1.05, alpha=0.55, zorder=2)
+    ax.scatter([len(rows) - 1], [price], color=WHITE, s=18, zorder=6)
 
-    ax.text(len(rows) - 0.4, resistance, f" {_fmt(resistance)}", color=RED,
-            fontsize=7.5, va="center", ha="left", fontproperties=FONT_PROP)
-    ax.text(len(rows) - 0.4, price, f" {_fmt(price)}", color=AMBER,
-            fontsize=7.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
-    ax.text(len(rows) - 0.4, support, f" {_fmt(support)}", color=GREEN,
-            fontsize=7.5, va="center", ha="left", fontproperties=FONT_PROP)
+    # 우측 라벨
+    lx = len(rows) + 0.6
+    ax.text(lx, resistance, f"박스상단 {_fmt(resistance)}", color=RED,
+            fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
+    ax.text(lx, middle, f"중앙 {_fmt(middle)}", color=AMBER,
+            fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
+    ax.text(lx + 2.3, price, _fmt(price), color=WHITE,
+            fontsize=12.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
+    ax.text(lx, support, f"박스하단 {_fmt(support)}", color=GREEN,
+            fontsize=11.5, va="center", ha="left", fontweight="bold", fontproperties=FONT_PROP)
 
-    ax.text(0.012, 0.97, "15M 캔들차트", transform=ax.transAxes,
-            color=MUTED, fontsize=8.5, va="top", fontproperties=FONT_PROP)
-    ax.text(0.99, 0.97, "— EMA20", transform=ax.transAxes,
-            color=AMBER, fontsize=8.5, va="top", ha="right", fontproperties=FONT_PROP)
+    # 차트 내부 헤더
+    ax.text(0.025, 0.94, f"{chart_tf} 캔들차트", transform=ax.transAxes,
+            color=TEXT, fontsize=18, va="top", ha="left", fontweight="bold", fontproperties=FONT_PROP)
+    ax.text(0.965, 0.94, "— EMA20", transform=ax.transAxes,
+            color=AMBER, fontsize=15, va="top", ha="right", fontweight="bold", fontproperties=FONT_PROP)
 
+    # 축 스타일
     ax.yaxis.tick_right()
-    ax.tick_params(axis="y", colors=DIM, labelsize=7)
-    ax.tick_params(axis="x", colors=DIM, labelsize=6)
-    ax.grid(axis="y", color=BORDER, linewidth=0.5, alpha=0.5)
+    ax.tick_params(axis="y", colors=DIM, labelsize=8, length=0)
+    ax.tick_params(axis="x", colors=DIM, labelsize=7, length=0)
+    ax.grid(axis="y", color=GRID, linewidth=0.8, alpha=0.38)
     ax.set_xticks([])
+    ax.set_yticklabels([])
 
 
-# ─── 메인 렌더링 함수 ─────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# 메인 렌더링 함수
+# ─────────────────────────────────────────────────────────────
 
 def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     from matplotlib.patches import FancyBboxPatch, Rectangle
@@ -254,8 +354,9 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     symbol = _get(sig, "symbol", default="BTCUSDT")
     base, quote = _split_symbol(symbol)
 
-    support = _safe(_get(sig, "support", default=0))
-    resistance = _safe(_get(sig, "resistance", default=0))
+    current_price = _safe(_get(sig, "current_price", "price", default=0))
+    support = _safe(_get(sig, "support", "range_low", default=0))
+    resistance = _safe(_get(sig, "resistance", "range_high", default=0))
     long_score = _safe(_get(sig, "long_score", default=0))
     short_score = _safe(_get(sig, "short_score", default=0))
     rsi = _safe(_get(sig, "rsi", default=50))
@@ -264,6 +365,12 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     is_range = _get(sig, "is_range", default=False)
     range_pos = _get(sig, "range_pos", default=None)
     bb_squeeze = _get(sig, "bb_squeeze", default=False)
+    chart_tf = str(_get(sig, "chart_tf", "timeframe", "_chart_tf", default="15M") or "15M").upper()
+
+    if current_price <= 0:
+        rows = _norm_candles(candles_15m, 1)
+        if rows:
+            current_price = rows[-1]["close"]
 
     trend_15m = _get(sig, "trend_15m", default="SIDEWAYS")
     trend_30m = _get(sig, "trend_30m", default="SIDEWAYS")
@@ -272,53 +379,50 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
     macd_label, macd_color, macd_desc = _macd_ko(_get(sig, "macd_state", default="NEUTRAL"))
 
-    score_gap = abs(long_score - short_score)
     total = max(long_score + short_score, 1)
-    long_ratio = long_score / total
-    short_ratio = short_score / total
+    long_ratio = max(0.0, min(1.0, long_score / total))
+    short_ratio = max(0.0, min(1.0, short_score / total))
 
-    if direction == "LONG":
-        badge_txt, badge_color = "LONG 지지", GREEN
-    elif direction == "SHORT":
-        badge_txt, badge_color = "SHORT 지지", RED
-    else:
-        badge_txt, badge_color = "대기", MUTED
-
-    gap_strength = "강한 신호" if score_gap >= 30 else ("중간 신호" if score_gap >= 15 else "약한 신호")
-    gap_text = f"차이 {score_gap:.0f}%p  {gap_strength}"
+    badge_txt, badge_color, badge_bg = _entry_label(direction, is_range, range_pos, long_score, short_score)
+    reason_text = _reason_text(sig)
 
     if is_range and range_pos == "MIDDLE":
         bullet_color = AMBER
-        bullet_text = f"박스 중앙  {_fmt(support)}~{_fmt(resistance)}  양방향 노이즈  진입 금지"
+        bullet_title = "박스 중앙"
+        bullet_text = f"{_fmt(support)}~{_fmt(resistance)} 사이 · 양방향 노이즈"
     elif is_range and range_pos == "BOTTOM":
         bullet_color = GREEN
-        bullet_text = "박스 하단 지지 근접  이탈 실패 시 롱 후보"
+        bullet_title = "박스 하단"
+        bullet_text = "지지 근접 · 이탈 실패 시 롱 후보"
     elif is_range and range_pos == "TOP":
         bullet_color = RED
-        bullet_text = "박스 상단 저항 근접  돌파 실패 시 숏 후보"
+        bullet_title = "박스 상단"
+        bullet_text = "저항 근접 · 돌파 실패 시 숏 후보"
     elif bb_squeeze:
         bullet_color = AMBER
-        bullet_text = "볼린저밴드 수축  큰 움직임 임박  방향 확인 필수"
+        bullet_title = "변동성 수축"
+        bullet_text = "큰 움직임 임박 · 방향 확인 필수"
     else:
         bullet_color = MUTED
-        bullet_text = f"박스 구간 {_fmt(support)}~{_fmt(resistance)}  방향 돌파 확인 후 진입"
+        bullet_title = "감시구간"
+        bullet_text = f"{_fmt(support)}~{_fmt(resistance)} · 돌파 확인 후 진입"
 
     tf_items = [
-        (f"15M {'상승' if trend_15m == 'UP' else ('하락' if trend_15m == 'DOWN' else '횡보')}", _trend_color(trend_15m)),
-        (f"30M {'상승' if trend_30m == 'UP' else ('하락' if trend_30m == 'DOWN' else '횡보')}", _trend_color(trend_30m)),
-        (f"1H {'상승' if trend_1h == 'UP' else ('하락' if trend_1h == 'DOWN' else '횡보')}", _trend_color(trend_1h)),
-        (f"4H {'상승' if trend_4h == 'UP' else ('하락' if trend_4h == 'DOWN' else '횡보')}", _trend_color(trend_4h)),
+        (f"15M {_trend_ko(trend_15m)}", _trend_color(trend_15m)),
+        (f"30M {_trend_ko(trend_30m)}", _trend_color(trend_30m)),
+        (f"1H {_trend_ko(trend_1h)}", _trend_color(trend_1h)),
+        (f"4H {_trend_ko(trend_4h)}", _trend_color(trend_4h)),
     ]
 
     if trend_1h == trend_4h and trend_1h in ("UP", "DOWN"):
         dir_ko = "상승" if trend_1h == "UP" else "하락"
-        tf_summary = f"중기 장기 {dir_ko} 일치  단기 방향 확인 중"
+        tf_summary = f"상위봉 {dir_ko} 일치 · 단기 방향 확인"
         tf_sum_color = _trend_color(trend_1h)
     elif trend_1h == "SIDEWAYS" and trend_4h == "SIDEWAYS":
-        tf_summary = "전 타임프레임 횡보  방향 미확정"
+        tf_summary = "상위봉 횡보 · 방향 미확정"
         tf_sum_color = MUTED
     else:
-        tf_summary = "타임프레임 혼재  상위봉 방향 우선"
+        tf_summary = "타임프레임 혼재 · 상위봉 방향 우선"
         tf_sum_color = AMBER
 
     if direction == "LONG":
@@ -326,26 +430,26 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
     elif direction == "SHORT":
         conclusion_main, conclusion_color = "SHORT 우세", RED
     else:
-        conclusion_main, conclusion_color = "방향 대기", MUTED
+        conclusion_main, conclusion_color = "진입 대기", AMBER
 
     warn_parts = []
     if trend_1h != trend_4h and "SIDEWAYS" not in (trend_1h, trend_4h):
-        warn_parts.append("1H 4H 방향 불일치  추세 정렬 확인")
+        warn_parts.append("1H 4H 방향 불일치 · 추세 정렬 확인")
     if rsi > 65:
         warn_parts.append("RSI 과매수 주의")
     elif rsi < 35:
         warn_parts.append("RSI 과매도 주의")
 
-    warn1 = warn_parts[0] if warn_parts else ""
-    warn2 = "돌파 이탈 + 거래량 확인 전 진입 금지"
+    warn1 = warn_parts[0] if warn_parts else "돌파 이탈 + 거래량 확인 전 진입 금지"
 
-    rsi_color = RSI_OVER if rsi > 65 else (GREEN if rsi > 55 else (RED if rsi < 35 else WHITE))
-    rsi_state = "과매수" if rsi > 65 else ("강세" if rsi > 55 else ("과매도" if rsi < 35 else "중립"))
+    rsi_color = RED if rsi > 70 else (GREEN if rsi >= 55 else (RED if rsi <= 35 else TEXT))
+    rsi_state = "과매수" if rsi > 70 else ("강세" if rsi >= 55 else ("과매도" if rsi <= 35 else "중립"))
 
-    cci_color = GREEN if cci >= 100 else (RED if cci <= -100 else WHITE)
+    cci_color = GREEN if cci >= 100 else (RED if cci <= -100 else TEXT)
     cci_state = "상승압력" if cci >= 100 else ("하락압력" if cci <= -100 else ("약세" if cci < 0 else "강세"))
 
-    FIG_W, FIG_H = 6.0, 14.2
+    # 모바일 텔레그램에서 읽기 쉬운 세로형 카드
+    FIG_W, FIG_H = 7.6, 12.8
     DPI = 160
 
     fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI, facecolor=BG)
@@ -370,11 +474,11 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
             fontproperties=FONT_PROP,
         )
 
-    def HR(y, x0=0.03, x1=0.97, color=BORDER, lw=0.8):
+    def HR(y, x0=0.035, x1=0.965, color=BORDER, lw=1.0):
         ax.plot([x0, x1], [y, y], transform=ax.transAxes,
                 color=color, linewidth=lw, solid_capstyle="butt")
 
-    def RECT(x, y, w, h, face=PANEL, edge=BORDER, lw=0.8, r=0.010):
+    def RECT(x, y, w, h, face=PANEL, edge=BORDER, lw=1.0, r=0.018, alpha=1.0):
         ax.add_patch(FancyBboxPatch(
             (x, y),
             w,
@@ -383,6 +487,7 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
             linewidth=lw,
             edgecolor=edge,
             facecolor=face,
+            alpha=alpha,
             transform=ax.transAxes,
             clip_on=False,
         ))
@@ -391,81 +496,93 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
         ax.add_patch(plt.Circle((x, y), r, color=color,
                                 transform=ax.transAxes, clip_on=False, zorder=5))
 
-    HDR_Y = 0.962
+    # 배경 메인 카드
+    RECT(0.018, 0.018, 0.964, 0.964, face=BG2, edge="#171b24", lw=1.0, r=0.030)
 
-    T(0.04, HDR_Y, base, size=22, color=GREEN, weight="bold")
-    T(0.185, HDR_Y, quote, size=13, color=WHITE)
+    # ── Header: 오른쪽 예시처럼 크게 표시
+    HDR_Y = 0.935
+    T(0.055, HDR_Y, base, size=31, color=PURPLE, weight="bold")
+    T(0.205, HDR_Y, quote, size=21, color=WHITE, weight="bold")
 
-    RECT(0.46, HDR_Y - 0.017, 0.165, 0.034,
-         face=PURPLE, edge=PURPLE, r=0.007)
-    T(0.542, HDR_Y, "진입레이더", size=8.5, color=WHITE, weight="bold", ha="center")
+    RECT(0.355, HDR_Y - 0.026, 0.170, 0.042, face=badge_bg, edge=badge_color, lw=1.4, r=0.011)
+    T(0.440, HDR_Y - 0.004, badge_txt, size=16, color=badge_color, weight="bold", ha="center")
 
-    T(0.97, HDR_Y, now_kst().strftime("%H:%M"), size=10, color=MUTED, ha="right")
+    T(0.940, HDR_Y + 0.004, _fmt_price(current_price), size=28, color=WHITE, weight="bold", ha="right")
+    T(0.940, HDR_Y - 0.038, now_kst().strftime("%H:%M KST"), size=17, color=MUTED, ha="right")
 
-    HR(0.943)
+    HR(0.875, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
 
-    BADGE_Y = 0.921
+    # ── Signal status: 오른쪽 예시처럼 WAIT + 사유 + 비율바
+    STATUS_Y = 0.830
+    RECT(0.055, STATUS_Y - 0.027, 0.135, 0.048, face=badge_bg, edge=badge_color, lw=1.4, r=0.012)
+    T(0.122, STATUS_Y - 0.002, badge_txt, size=18, color=badge_color, weight="bold", ha="center")
+    T(0.220, STATUS_Y, reason_text, size=17, color=MUTED, weight="bold")
 
-    RECT(0.03, BADGE_Y - 0.017, 0.18, 0.034,
-         face=badge_color, edge=badge_color, r=0.007)
-    T(0.12, BADGE_Y, badge_txt, size=9.5, color=WHITE, weight="bold", ha="center")
+    SCORE_Y = 0.770
+    T(0.055, SCORE_Y + 0.027, f"LONG {long_score:.0f}%", size=18, color=GREEN, weight="bold")
+    T(0.500, SCORE_Y + 0.027, "신호강도", size=17, color=MUTED, weight="bold", ha="center")
+    T(0.945, SCORE_Y + 0.027, f"SHORT {short_score:.0f}%", size=18, color=RED, weight="bold", ha="right")
 
-    T(0.255, BADGE_Y, gap_text, size=8.5, color=MUTED)
-    T(0.97, BADGE_Y, "감시구간", size=8.5, color=MUTED, ha="right")
+    BAR_X = 0.055
+    BAR_W = 0.890
+    BAR_H = 0.029
+    BAR_Y = SCORE_Y - 0.010
+    RECT(BAR_X, BAR_Y, BAR_W, BAR_H, face=GRAY_BAR, edge=GRAY_BAR, lw=0, r=0.014)
+    ax.add_patch(FancyBboxPatch(
+        (BAR_X, BAR_Y), BAR_W * long_ratio, BAR_H,
+        boxstyle="round,pad=0.002,rounding_size=0.014",
+        linewidth=0, facecolor=GREEN, transform=ax.transAxes, clip_on=False,
+    ))
+    ax.add_patch(FancyBboxPatch(
+        (BAR_X + BAR_W * (1 - short_ratio), BAR_Y), BAR_W * short_ratio, BAR_H,
+        boxstyle="round,pad=0.002,rounding_size=0.014",
+        linewidth=0, facecolor=RED, transform=ax.transAxes, clip_on=False,
+    ))
 
-    SB_Y = 0.899
-    T(0.04, SB_Y, f"LONG {long_score:.0f}%", size=8.5, color=GREEN, weight="bold")
-    T(0.455, SB_Y, "신호강도", size=8, color=MUTED, ha="center")
-    T(0.97, SB_Y, f"SHORT {short_score:.0f}%", size=8.5, color=RED, weight="bold", ha="right")
+    HR(0.725, x0=0.020, x1=0.980, color=BORDER, lw=1.2)
 
-    BAR_Y = 0.876
-    BAR_H = 0.026
-    BX = 0.03
-    BW = 0.94
+    # ── Chart card: 둥근 패널 + 내부 차트
+    CHART_CARD_X = 0.055
+    CHART_CARD_Y = 0.405
+    CHART_CARD_W = 0.890
+    CHART_CARD_H = 0.285
+    RECT(CHART_CARD_X, CHART_CARD_Y, CHART_CARD_W, CHART_CARD_H,
+         face=PANEL, edge="#1e2530", lw=1.1, r=0.020)
 
-    ax.add_patch(Rectangle((BX, BAR_Y), BW, BAR_H,
-                           transform=ax.transAxes, facecolor=BORDER, edgecolor="none"))
-    ax.add_patch(Rectangle((BX, BAR_Y), BW * long_ratio, BAR_H,
-                           transform=ax.transAxes, facecolor=GREEN, edgecolor="none"))
-    ax.add_patch(Rectangle((BX + BW * (1 - short_ratio), BAR_Y),
-                           BW * short_ratio, BAR_H,
-                           transform=ax.transAxes, facecolor=RED, edgecolor="none"))
+    chart_ax = fig.add_axes([
+        CHART_CARD_X + 0.028,
+        CHART_CARD_Y + 0.060,
+        CHART_CARD_W - 0.056,
+        CHART_CARD_H - 0.085,
+    ])
+    _draw_chart(chart_ax, candles_15m, sig, chart_tf=chart_tf)
 
-    HR(0.863)
+    # 차트 하단 박스 설명
+    DOT(CHART_CARD_X + 0.038, CHART_CARD_Y + 0.038, r=0.010, color=bullet_color)
+    T(CHART_CARD_X + 0.065, CHART_CARD_Y + 0.038, bullet_title, size=18, color=bullet_color, weight="bold")
+    T(CHART_CARD_X + 0.205, CHART_CARD_Y + 0.038, bullet_text, size=17, color=TEXT)
 
-    CHART_B = 0.550
-    CHART_T = 0.857
-    chart_ax = fig.add_axes([0.03, CHART_B, 0.93, CHART_T - CHART_B])
-    _draw_chart(chart_ax, candles_15m, sig)
+    # ── Timeframe
+    TF_TOP = 0.355
+    T(0.055, TF_TOP, "타임프레임", size=16, color=WHITE, weight="bold")
 
-    BUL_Y = 0.534
-    DOT(0.044, BUL_Y, r=0.006, color=bullet_color)
-    T(0.066, BUL_Y, bullet_text, size=8.5, color=MUTED)
-
-    HR(0.518)
-
-    TF_HDR_Y = 0.500
-    T(0.04, TF_HDR_Y, "타임프레임", size=9.5, color=WHITE, weight="bold")
-
-    TF_ROW_Y = 0.473
-    tf_xs = [0.03, 0.265, 0.50, 0.735]
+    TF_ROW_Y = 0.320
+    tf_xs = [0.055, 0.287, 0.520, 0.752]
     for (label, col), bx in zip(tf_items, tf_xs):
-        DOT(bx + 0.010, TF_ROW_Y, r=0.006, color=col)
-        T(bx + 0.028, TF_ROW_Y, label, size=8.5, color=WHITE)
+        DOT(bx, TF_ROW_Y, r=0.007, color=col)
+        T(bx + 0.020, TF_ROW_Y, label, size=13.5, color=TEXT, weight="bold")
 
-    TF_SUM_Y = 0.447
-    ax.plot([0.04, 0.04], [TF_SUM_Y - 0.013, TF_SUM_Y + 0.013],
-            transform=ax.transAxes, color=tf_sum_color, linewidth=2.5)
-    T(0.060, TF_SUM_Y, tf_summary, size=8.5, color=tf_sum_color)
+    ax.plot([0.055, 0.055], [0.276, 0.302], transform=ax.transAxes, color=tf_sum_color, linewidth=3.0)
+    T(0.073, 0.289, tf_summary, size=13.5, color=tf_sum_color, weight="bold")
 
-    HR(0.428)
+    HR(0.260, color=BORDER)
 
-    IND_HDR_Y = 0.412
-    T(0.04, IND_HDR_Y, "지표", size=9.5, color=WHITE, weight="bold")
+    # ── Indicators
+    T(0.055, 0.235, "지표", size=16, color=WHITE, weight="bold")
 
-    CW, CH = 0.285, 0.075
-    CY = 0.325
-    CXS = [0.030, 0.357, 0.685]
+    CW, CH = 0.278, 0.080
+    CY = 0.130
+    CXS = [0.055, 0.361, 0.667]
 
     ind_data = [
         ("RSI", f"{rsi:.1f}", rsi_state, rsi_color),
@@ -475,37 +592,32 @@ def render_radar_card(sig: dict, candles_15m: list) -> bytes:
 
     for i, (label, val, state, col) in enumerate(ind_data):
         cx = CXS[i]
-        cy = CY
-        RECT(cx, cy, CW, CH, face=PANEL, edge=BORDER, r=0.007)
-        T(cx + 0.018, cy + CH - 0.016, label, size=8, color=MUTED)
-        T(cx + 0.018, cy + CH * 0.46, val, size=15, color=col, weight="bold")
-        T(cx + 0.018, cy + 0.010, state, size=8, color=col)
+        RECT(cx, CY, CW, CH, face=PANEL2, edge=BORDER, lw=1.0, r=0.010)
+        T(cx + 0.020, CY + CH - 0.020, label, size=10.5, color=MUTED, weight="bold")
+        T(cx + 0.020, CY + CH * 0.45, val, size=18, color=col, weight="bold")
+        T(cx + 0.020, CY + 0.014, state, size=10.5, color=col, weight="bold")
 
-    HR(0.316)
+    HR(0.108, color=BORDER)
 
-    CONC_Y = 0.288
-    T(0.04, CONC_Y, "결론 —", size=9.5, color=WHITE, weight="bold")
-    T(0.148, CONC_Y, conclusion_main, size=9.5, color=conclusion_color, weight="bold")
+    # ── Conclusion
+    T(0.055, 0.075, "결론 —", size=14, color=TEXT, weight="bold")
+    T(0.150, 0.075, conclusion_main, size=14, color=conclusion_color, weight="bold")
+    T(0.055, 0.047, warn1, size=12.5, color=conclusion_color, weight="bold")
 
-    W1_Y = 0.260
-    if warn1:
-        T(0.04, W1_Y, warn1, size=8.5, color=MUTED)
-
-    W2_Y = 0.235 if warn1 else 0.260
-    T(0.04, W2_Y, warn2, size=8.5, color=conclusion_color)
-
-    T(0.5, 0.012, "※ 자동진입 아님  15분봉 마감 기준",
-      size=7.5, color=DIM, ha="center", alpha=0.7)
+    T(0.500, 0.022, "※ 자동진입 아님 · 봉 마감 기준", size=9.5, color=DIM, ha="center", alpha=0.85)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=DPI,
-                bbox_inches="tight", facecolor=BG, pad_inches=0.08)
+    fig.savefig(buf, format="png", dpi=DPI, bbox_inches="tight", facecolor=BG, pad_inches=0.02)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
 
 
 def render_dashboard_card(sig: dict, candles_1h: list) -> bytes:
+    # 기존 호출부 호환 유지. 1H 전광판에서는 차트 라벨만 1H로 표시한다.
+    if isinstance(sig, dict):
+        sig = dict(sig)
+        sig.setdefault("_chart_tf", "1H")
     return render_radar_card(sig, candles_1h)
 
 
