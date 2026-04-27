@@ -1,9 +1,0 @@
-telethon
-anthropic
-requests
-gspread
-google-auth
-pandas
-ta
-matplotlib
-Pillow

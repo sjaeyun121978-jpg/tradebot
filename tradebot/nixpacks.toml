@@ -1,6 +1,0 @@
-[phases.setup]
-nixPkgs = ["python311", "fontconfig"]
-aptPkgs = ["fonts-nanum", "fonts-nanum-coding", "fontconfig"]
-
-[phases.build]
-cmds = ["pip install -r requirements.txt", "fc-cache -fv"]
